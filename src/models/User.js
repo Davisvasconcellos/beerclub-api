@@ -1,0 +1,119 @@
+const { DataTypes } = require('sequelize');
+const { sequelize } = require('../config/database');
+const bcrypt = require('bcryptjs');
+
+const User = sequelize.define('User', {
+  id: {
+    type: DataTypes.INTEGER,
+    primaryKey: true,
+    autoIncrement: true
+  },
+  id_code: {
+    type: DataTypes.STRING(255),
+    allowNull: false,
+    unique: true
+  },
+  name: {
+    type: DataTypes.STRING(255),
+    allowNull: false,
+    validate: {
+      notEmpty: true,
+      len: [1, 255]
+    }
+  },
+  email: {
+    type: DataTypes.STRING(255),
+    allowNull: true,
+    unique: true,
+    validate: {
+      isEmail: true
+    }
+  },
+  phone: {
+    type: DataTypes.STRING(20),
+    allowNull: true
+  },
+  password_hash: {
+    type: DataTypes.STRING(255),
+    allowNull: false,
+    validate: {
+      notEmpty: true,
+      len: [6, 255]
+    }
+  },
+  role: {
+    type: DataTypes.ENUM('master', 'admin', 'manager', 'waiter', 'customer'),
+    allowNull: false,
+    defaultValue: 'customer'
+  },
+  team_user: {
+    type: DataTypes.INTEGER,
+    allowNull: true,
+    references: {
+      model: 'football_teams',
+      key: 'id'
+    }
+  },
+  plan_id: {
+    type: DataTypes.INTEGER,
+    allowNull: true,
+    references: {
+      model: 'plans',
+      key: 'id'
+    }
+  },
+  plan_start: {
+    type: DataTypes.DATEONLY,
+    allowNull: true
+  },
+  plan_end: {
+    type: DataTypes.DATEONLY,
+    allowNull: true
+  }
+}, {
+  tableName: 'users',
+  timestamps: true,
+  createdAt: 'created_at',
+  updatedAt: false,
+  hooks: {
+    beforeCreate: async (user) => {
+      if (user.password_hash) {
+        user.password_hash = await bcrypt.hash(user.password_hash, 12);
+      }
+    },
+    beforeUpdate: async (user) => {
+      if (user.changed('password_hash')) {
+        user.password_hash = await bcrypt.hash(user.password_hash, 12);
+      }
+    },
+    afterCreate: async (user) => {
+      const id_code = `${Date.now()}_${user.id}`;
+      await user.update({ id_code });
+    }
+  }
+});
+
+// Relação com football_teams
+//User.belongsTo(sequelize.models.FootballTeam, { foreignKey: 'team_user', as: 'team' });
+
+// Instance methods
+User.prototype.comparePassword = async function(candidatePassword) {
+  return await bcrypt.compare(candidatePassword, this.password_hash);
+};
+
+User.prototype.toJSON = function() {
+  const values = Object.assign({}, this.get());
+  delete values.password_hash;
+  return values;
+};
+
+// Class methods
+User.findByEmail = function(email) {
+  return this.findOne({ where: { email } });
+};
+
+User.findByRole = function(role) {
+  return this.findAll({ where: { role } });
+};
+
+module.exports = User;
