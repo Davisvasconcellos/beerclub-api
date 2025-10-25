@@ -10,7 +10,7 @@ const User = sequelize.define('User', {
   },
   id_code: {
     type: DataTypes.STRING(255),
-    allowNull: false,
+    allowNull: true,
     unique: true
   },
   name: {
@@ -35,10 +35,12 @@ const User = sequelize.define('User', {
   },
   password_hash: {
     type: DataTypes.STRING(255),
-    allowNull: false,
-    validate: {
-      notEmpty: true,
-      len: [6, 255]
+    allowNull: false
+  },
+  password: {
+    type: DataTypes.VIRTUAL,
+    set(value) {
+      this.setDataValue('password_hash', value);
     }
   },
   role: {
@@ -104,6 +106,7 @@ User.prototype.comparePassword = async function(candidatePassword) {
 User.prototype.toJSON = function() {
   const values = Object.assign({}, this.get());
   delete values.password_hash;
+  delete values.password; // Também remover o campo virtual
   return values;
 };
 

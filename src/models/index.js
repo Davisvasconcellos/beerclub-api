@@ -4,6 +4,7 @@ const { sequelize } = require('../config/database');
 const Plan = require('./Plan');
 const Store = require('./Store');
 const User = require('./User');
+const TokenBlocklist = require('./TokenBlocklist');
 const StoreUser = require('./StoreUser');
 const Product = require('./Product');
 const FootballTeam = require('./FootballTeam');
@@ -81,6 +82,6 @@ module.exports = {
   OrderItem,
   PixPayment,
   Message,
-  FootballTeam, 
+  FootballTeam,
+  TokenBlocklist
 }; 
-

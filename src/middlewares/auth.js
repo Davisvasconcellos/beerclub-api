@@ -1,6 +1,6 @@
 // src/middlewares/auth.js
 const jwt = require('jsonwebtoken');
-const { User } = require('../models'); // ajuste o caminho se necessário
+const { User, TokenBlocklist } = require('../models'); // ajuste o caminho se necessário
 
 // Middleware para validar token e popular req.user
 const authenticateToken = async (req, res, next) => {
@@ -14,6 +14,13 @@ const authenticateToken = async (req, res, next) => {
   }
 
   try {
+    // Verificar se o token está na blocklist
+    const isBlocked = await TokenBlocklist.findByPk(token);
+    if (isBlocked) {
+      console.log('Token na blocklist');
+      return res.status(401).json({ message: 'Token inválido' });
+    }
+
     const decoded = jwt.verify(token, process.env.JWT_SECRET);
     console.log('Token decodificado:', decoded);
 
@@ -25,13 +32,8 @@ const authenticateToken = async (req, res, next) => {
       return res.status(401).json({ message: 'Usuário não encontrado' });
     }
 
-    // Coloca usuário no req
-    req.user = {
-      id: user.id,
-      name: user.name,
-      email: user.email,
-      role: user.role
-    };
+    // Anexa o payload decodificado do token ao req.user
+    req.user = decoded;
 
     console.log('Usuário autenticado:', req.user);
     next();

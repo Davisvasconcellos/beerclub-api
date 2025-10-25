@@ -1,7 +1,8 @@
 const express = require('express');
 const jwt = require('jsonwebtoken');
 const { body, validationResult } = require('express-validator');
-const { User, Plan } = require('../models');
+const { User, Plan, TokenBlocklist } = require('../models');
+const { authenticateToken } = require('../middlewares/auth');
 
 const router = express.Router();
 
@@ -36,8 +37,8 @@ const router = express.Router();
  *         description: Credenciais inválidas
  */
 router.post('/login', [
-  body('email').isEmail().normalizeEmail(),
-  body('password').isLength({ min: 6 })
+  body('email').isEmail().withMessage('O email fornecido é inválido.').normalizeEmail(),
+  body('password').isLength({ min: 6 }).withMessage('A senha deve ter no mínimo 6 caracteres.')
 ], async (req, res) => {
   try {
     // Validar dados de entrada
@@ -138,10 +139,10 @@ router.post('/login', [
  *         description: Email já existe
  */
 router.post('/register', [
-  body('name').isLength({ min: 2, max: 255 }).trim(),
-  body('email').isEmail().normalizeEmail(),
-  body('password').isLength({ min: 6 }),
-  body('phone').optional().isLength({ min: 10, max: 20 })
+  body('name').isLength({ min: 2, max: 255 }).trim().withMessage('O nome deve ter entre 2 e 255 caracteres.'),
+  body('email').isEmail().normalizeEmail().withMessage('O email fornecido é inválido.'),
+  body('password').isLength({ min: 6 }).withMessage('A senha deve ter no mínimo 6 caracteres.'),
+  body('phone').optional().isLength({ min: 10, max: 20 }).withMessage('O telefone deve ter entre 10 e 20 caracteres.')
 ], async (req, res) => {
   try {
     // Validar dados de entrada
@@ -170,7 +171,7 @@ router.post('/register', [
       name,
       email,
       phone,
-      password_hash: password,
+      password,
       role: 'customer'
     });
 
@@ -219,10 +220,10 @@ router.post('/register', [
  *       401:
  *         description: Não autorizado
  */
-router.get('/me', async (req, res) => {
+router.get('/me', authenticateToken, async (req, res) => {
   try {
     // O middleware de auth já adicionou o usuário ao req
-    const user = await User.findByPk(req.user.id, {
+    const user = await User.findByPk(req.user.userId, {
       include: [
         {
           model: Plan,
@@ -231,6 +232,13 @@ router.get('/me', async (req, res) => {
         }
       ]
     });
+
+    if (!user) {
+      return res.status(404).json({
+        error: 'User not found',
+        message: 'Usuário não encontrado no banco de dados.'
+      });
+    }
 
     res.json({
       success: true,
@@ -261,7 +269,7 @@ router.get('/me', async (req, res) => {
  *       401:
  *         description: Token inválido
  */
-router.post('/refresh', async (req, res) => {
+router.post('/refresh', authenticateToken, async (req, res) => {
   try {
     // O middleware de auth já validou o token
     const user = req.user;
@@ -269,10 +277,10 @@ router.post('/refresh', async (req, res) => {
     // Gerar novo token
     const token = jwt.sign(
       {
-        userId: user.id,
+        userId: user.userId,
         email: user.email,
         role: user.role,
-        planId: user.plan_id
+        planId: user.planId
       },
       process.env.JWT_SECRET,
       { expiresIn: process.env.JWT_EXPIRES_IN || '24h' }
@@ -308,10 +316,19 @@ router.post('/refresh', async (req, res) => {
  *       200:
  *         description: Logout realizado com sucesso
  */
-router.post('/logout', async (req, res) => {
+router.post('/logout', authenticateToken, async (req, res) => {
   try {
-    // Em uma implementação mais robusta, você poderia invalidar o token
-    // Por enquanto, apenas retornamos sucesso
+    const authHeader = req.headers['authorization'];
+    const token = authHeader && authHeader.split(' ')[1];
+
+    if (token) {
+      const decoded = jwt.decode(token);
+      await TokenBlocklist.create({
+        token,
+        expiresAt: new Date(decoded.exp * 1000)
+      });
+    }
+
     res.json({
       success: true,
       message: 'Logout realizado com sucesso'

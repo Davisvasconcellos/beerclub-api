@@ -154,6 +154,7 @@ const server = app.listen(PORT, async () => {
   try {
     await testConnection();
     console.log('✅ Database connected successfully');
+    console.log('✅ Node Server OK');
   } catch (error) {
     console.error('❌ Database connection failed:', error);
   }

@@ -185,12 +185,12 @@ router.get('/:id', async (req, res) => {
  *         description: Produto criado com sucesso
  */
 router.post('/', requireRole('admin', 'gerente'), [
-  body('name').isLength({ min: 2, max: 100 }).trim(),
-  body('description').optional().isLength({ max: 500 }),
-  body('price').isFloat({ min: 0 }),
-  body('categoryId').isInt(),
-  body('image').optional().isURL(),
-  body('available').optional().isBoolean()
+  body('name').isLength({ min: 2, max: 100 }).trim().withMessage('O nome deve ter entre 2 e 100 caracteres'),
+  body('description').optional().isLength({ max: 500 }).withMessage('A descrição não pode exceder 500 caracteres'),
+  body('price').isFloat({ min: 0 }).withMessage('O preço deve ser um número válido'),
+  body('categoryId').isInt().withMessage('O ID da categoria deve ser um número inteiro'),
+  body('image').optional().isURL().withMessage('A URL da imagem é inválida'),
+  body('available').optional().isBoolean().withMessage('O valor de "available" deve ser booleano')
 ], async (req, res) => {
   try {
     const errors = validationResult(req);
@@ -267,12 +267,12 @@ router.post('/', requireRole('admin', 'gerente'), [
  *         description: Produto atualizado com sucesso
  */
 router.put('/:id', requireRole('admin', 'gerente'), [
-  body('name').optional().isLength({ min: 2, max: 100 }).trim(),
-  body('description').optional().isLength({ max: 500 }),
-  body('price').optional().isFloat({ min: 0 }),
-  body('categoryId').optional().isInt(),
-  body('image').optional().isURL(),
-  body('available').optional().isBoolean()
+  body('name').optional().isLength({ min: 2, max: 100 }).trim().withMessage('O nome deve ter entre 2 e 100 caracteres'),
+  body('description').optional().isLength({ max: 500 }).withMessage('A descrição não pode exceder 500 caracteres'),
+  body('price').optional().isFloat({ min: 0 }).withMessage('O preço deve ser um número válido'),
+  body('categoryId').optional().isInt().withMessage('O ID da categoria deve ser um número inteiro'),
+  body('image').optional().isURL().withMessage('A URL da imagem é inválida'),
+  body('available').optional().isBoolean().withMessage('O valor de "available" deve ser booleano')
 ], async (req, res) => {
   try {
     const errors = validationResult(req);
