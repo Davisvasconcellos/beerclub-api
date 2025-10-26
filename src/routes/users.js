@@ -222,8 +222,64 @@ router.post('/', authenticateToken, requireRole('admin'), [
   }
 });
 
+/**
+ * @swagger
+ * /api/v1/users/me:
+ *   put:
+ *     summary: Atualizar os dados do próprio usuário logado
+ *     tags: [Users]
+ *     security:
+ *       - bearerAuth: []
+ *     requestBody:
+ *       required: true
+ *       content:
+ *         application/json:
+ *           schema:
+ *             type: object
+ *             properties:
+ *               name:
+ *                 type: string
+ *               phone:
+ *                 type: string
+ *               team_user:
+ *                 type: integer
+ *     responses:
+ *       200:
+ *         description: Usuário atualizado com sucesso
+ *       400:
+ *         description: Dados inválidos
+ *       401:
+ *         description: Não autenticado
+ */
+router.put('/me', authenticateToken, [
+  body('name').optional().isLength({ min: 2, max: 255 }).trim().withMessage('O nome deve ter entre 2 e 255 caracteres.'),
+  body('phone').optional().isLength({ min: 10, max: 20 }).withMessage('O telefone deve ter entre 10 e 20 caracteres.'),
+  body('team_user').optional({ nullable: true }).isInt().withMessage('O ID do time deve ser um número inteiro.')
+], async (req, res) => {
+  try {
+    const errors = validationResult(req);
+    if (!errors.isEmpty()) {
+      return res.status(400).json({ error: 'Validation error', message: 'Dados inválidos', details: errors.array() });
+    }
+
+    const user = await User.findByPk(req.user.userId);
+    if (!user) {
+      return res.status(404).json({ error: 'User not found', message: 'Usuário não encontrado.' });
+    }
+
+    // Apenas campos permitidos são atualizados
+    const { name, phone, team_user } = req.body;
+    await user.update({ name, phone, team_user });
+
+    res.json({ success: true, message: 'Seu perfil foi atualizado com sucesso.', data: { user: user.toJSON() } });
+  } catch (error) {
+    console.error('Update self error:', error);
+    res.status(500).json({ error: 'Internal server error', message: 'Erro interno do servidor' });
+  }
+});
+
 // Atualizar usuário
-router.put('/:id', authenticateToken, requireRole('admin', 'manager'), [
+router.put('/:id_code', authenticateToken, requireRole('master', 'admin'), [
   body('name').optional().isLength({ min: 2, max: 255 }).trim(),
   body('email').optional().isEmail().normalizeEmail(),
   body('role').optional().isIn(['admin', 'manager', 'waiter', 'customer']),
@@ -241,10 +297,10 @@ router.put('/:id', authenticateToken, requireRole('admin', 'manager'), [
       });
     }
 
-    const { id } = req.params;
+    const { id_code } = req.params;
     const { name, email, role, phone, plan_id, team_user } = req.body;
 
-    const user = await User.findByPk(id);
+    const user = await User.findOne({ where: { id_code } });
     if (!user) {
       return res.status(404).json({
         error: 'User not found',
@@ -252,32 +308,11 @@ router.put('/:id', authenticateToken, requireRole('admin', 'manager'), [
       });
     }
 
-    if (req.user.role !== 'admin') {
-      const userStores = await StoreUser.findAll({
-        where: { user_id: req.user.id },
-        attributes: ['store_id']
-      });
-      const storeIds = userStores.map(su => su.store_id);
-      
-      const userStoreAccess = await StoreUser.findOne({
-        where: { 
-          user_id: id,
-          store_id: storeIds
-        }
-      });
-
-      if (!userStoreAccess) {
-        return res.status(403).json({
-          error: 'Access denied',
-          message: 'Acesso negado'
-        });
-      }
-    }
-
-    if (req.user.role !== 'admin' && role === 'admin') {
+    // Apenas 'master' pode definir outros como 'admin' ou 'master'
+    if (role && ['master', 'admin'].includes(role) && req.user.role !== 'master') {
       return res.status(403).json({
         error: 'Insufficient permissions',
-        message: 'Permissões insuficientes para definir role admin'
+        message: 'Permissões insuficientes para definir esta role.'
       });
     }
 
