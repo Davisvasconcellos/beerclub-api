@@ -90,7 +90,7 @@ router.get('/store-users/:storeId', authenticateToken, async (req, res) => {
 
 
 // Obter usuário por ID (rota dinâmica)
-router.get('/:id', requireRole('admin', 'manager'), async (req, res) => {
+router.get('/:id', authenticateToken, requireRole('admin', 'manager'), async (req, res) => {
   try {
     const { id } = req.params;
 
@@ -159,7 +159,7 @@ router.get('/:id', requireRole('admin', 'manager'), async (req, res) => {
 });
 
 // Criar novo usuário
-router.post('/', requireRole('admin'), [
+router.post('/', authenticateToken, requireRole('admin'), [
   body('name').isLength({ min: 2, max: 255 }).trim(),
   body('email').isEmail().normalizeEmail(),
   body('password').isLength({ min: 6 }),
@@ -223,7 +223,7 @@ router.post('/', requireRole('admin'), [
 });
 
 // Atualizar usuário
-router.put('/:id', requireRole('admin', 'manager'), [
+router.put('/:id', authenticateToken, requireRole('admin', 'manager'), [
   body('name').optional().isLength({ min: 2, max: 255 }).trim(),
   body('email').optional().isEmail().normalizeEmail(),
   body('role').optional().isIn(['admin', 'manager', 'waiter', 'customer']),
@@ -307,8 +307,87 @@ router.put('/:id', requireRole('admin', 'manager'), [
   }
 });
 
+/**
+ * @swagger
+ * /api/v1/users/{id_code}/reset-password:
+ *   post:
+ *     summary: Resetar a senha de um usuário (Admin/Master)
+ *     tags: [Users]
+ *     security:
+ *       - bearerAuth: []
+ *     parameters:
+ *       - in: path
+ *         name: id_code
+ *         required: true
+ *         schema:
+ *           type: string
+ *         description: ID Code do usuário a ter a senha resetada
+ *     requestBody:
+ *       required: true
+ *       content:
+ *         application/json:
+ *           schema:
+ *             type: object
+ *             required:
+ *               - password
+ *             properties:
+ *               password:
+ *                 type: string
+ *                 minLength: 6
+ *                 description: A nova senha para o usuário
+ *     responses:
+ *       200:
+ *         description: Senha atualizada com sucesso
+ *       400:
+ *         description: Dados inválidos (e.g., senha muito curta)
+ *       403:
+ *         description: Acesso negado
+ *       404:
+ *         description: Usuário não encontrado
+ */
+router.post('/:id_code/reset-password', authenticateToken, requireRole('master', 'admin'), [
+  body('password').isLength({ min: 6 }).withMessage('A nova senha deve ter no mínimo 6 caracteres.')
+], async (req, res) => {
+  try {
+    const errors = validationResult(req);
+    if (!errors.isEmpty()) {
+      return res.status(400).json({
+        error: 'Validation error',
+        message: 'Dados inválidos',
+        details: errors.array()
+      });
+    }
+
+    const { id_code } = req.params;
+    const { password } = req.body;
+
+    const user = await User.findOne({ where: { id_code } });
+    if (!user) {
+      return res.status(404).json({
+        error: 'User not found',
+        message: 'Usuário não encontrado'
+      });
+    }
+
+    // O hook beforeUpdate no modelo User irá criptografar a senha
+    await user.update({ password });
+
+    res.json({
+      success: true,
+      message: 'Senha do usuário atualizada com sucesso'
+    });
+
+  } catch (error) {
+    console.error('Reset password error:', error);
+    res.status(500).json({
+      error: 'Internal server error',
+      message: 'Erro interno do servidor'
+    });
+  }
+});
+
 // Deletar usuário
-router.delete('/:id', requireRole('admin'), async (req, res) => {
+router.delete('/:id', authenticateToken, requireRole('admin'), async (req, res) => {
   try {
     const { id } = req.params;
 

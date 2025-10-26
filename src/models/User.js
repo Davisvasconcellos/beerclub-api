@@ -89,7 +89,7 @@ const User = sequelize.define('User', {
       }
     },
     afterCreate: async (user) => {
-      const id_code = `${Date.now()}_${user.id}`;
+      const id_code = `${Date.now()}${user.id}`;
       await user.update({ id_code });
     }
   }
