@@ -110,7 +110,7 @@ router.get('/:id', authenticateToken, requireRole('admin', 'manager'), async (re
         {
           model: FootballTeam,
           as: 'team',
-          attributes: ['id', 'short_name', 'abbreviation', 'shield']
+          attributes: ['id', 'name', 'short_name', 'abbreviation', 'shield']
         }
       ],
       attributes: { exclude: ['password_hash'] }

@@ -96,7 +96,7 @@ const User = sequelize.define('User', {
 });
 
 // Relação com football_teams
-//User.belongsTo(sequelize.models.FootballTeam, { foreignKey: 'team_user', as: 'team' });
+// A associação foi movida para src/models/index.js para evitar dependências circulares.
 
 // Instance methods
 User.prototype.comparePassword = async function(candidatePassword) {

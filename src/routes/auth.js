@@ -1,7 +1,7 @@
 const express = require('express');
 const jwt = require('jsonwebtoken');
 const { body, validationResult } = require('express-validator');
-const { User, Plan, TokenBlocklist } = require('../models');
+const { User, Plan, TokenBlocklist, FootballTeam } = require('../models');
 const { authenticateToken } = require('../middlewares/auth');
 
 const router = express.Router();
@@ -54,7 +54,15 @@ router.post('/login', [
     const { email, password } = req.body;
 
     // Buscar usuário
-    const user = await User.findByEmail(email);
+    const user = await User.findOne({
+      where: { email },
+      include: [{
+        model: FootballTeam,
+        as: 'team',
+        attributes: ['name', 'short_name', 'abbreviation', 'shield']
+      }]
+    });
+
     if (!user) {
       return res.status(401).json({
         error: 'Invalid credentials',
@@ -229,6 +237,11 @@ router.get('/me', authenticateToken, async (req, res) => {
           model: Plan,
           as: 'plan',
           attributes: ['id', 'name', 'description', 'price']
+        },
+        {
+          model: FootballTeam,
+          as: 'team',
+          attributes: ['name', 'short_name', 'abbreviation', 'shield']
         }
       ]
     });
