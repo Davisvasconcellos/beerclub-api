@@ -555,4 +555,94 @@ router.delete('/:id', authenticateToken, requireRole('admin'), async (req, res) 
   }
 });
 
+/**
+ * @swagger
+ * /api/v1/users/verify-status/{id_code}:
+ *   get:
+ *     summary: Verifica o status de um usuário pelo id_code
+ *     tags: [Users]
+ *     description: Retorna informações básicas e de plano de um usuário. Acessível por 'master', 'admin', 'manager' e 'waiter'. Garçons e gerentes só podem ver clientes de suas lojas.
+ *     security:
+ *       - bearerAuth: []
+ *     parameters:
+ *       - in: path
+ *         name: id_code
+ *         required: true
+ *         schema:
+ *           type: string
+ *         description: O id_code único do usuário a ser verificado.
+ *     responses:
+ *       200:
+ *         description: Status do usuário retornado com sucesso.
+ *         content:
+ *           application/json:
+ *             schema:
+ *               type: object
+ *               properties:
+ *                 success:
+ *                   type: boolean
+ *                 data:
+ *                   type: object
+ *                   properties:
+ *                     name:
+ *                       type: string
+ *                     id_code:
+ *                       type: string
+ *                     avatar_url:
+ *                       type: string
+ *                     email:
+ *                       type: string
+ *                     status:
+ *                       type: string
+ *                     plan_id:
+ *                       type: integer
+ *                     plan_start:
+ *                       type: string
+ *                       format: date
+ *                     plan_end:
+ *                       type: string
+ *                       format: date
+ *                     plan:
+ *                       type: object
+ *                       properties:
+ *                         id:
+ *                           type: integer
+ *                         name:
+ *                           type: string
+ *                         description:
+ *                           type: string
+ *                         price:
+ *                           type: string
+ *       403:
+ *         description: Acesso negado.
+ *       404:
+ *         description: Usuário não encontrado.
+ */
+router.get('/verify-status/:id_code', authenticateToken, requireRole('master', 'admin', 'manager', 'waiter'), async (req, res) => {
+  try {
+    const { id_code } = req.params;
+    const requester = req.user;
+
+    const userToVerify = await User.findOne({
+      where: { id_code },
+      attributes: ['id', 'name', 'id_code', 'avatar_url', 'email', 'status', 'plan_id', 'plan_start', 'plan_end'],
+      include: [{
+        model: Plan,
+        as: 'plan',
+        attributes: ['id', 'name', 'description', 'price']
+      }]
+    });
+
+    if (!userToVerify) {
+      return res.status(404).json({ success: false, message: 'Usuário não encontrado.' });
+    }
+
+    res.json({ success: true, data: userToVerify.toJSON() });
+
+  } catch (error) {
+    console.error('Verify user status error:', error);
+    res.status(500).json({ success: false, message: 'Erro interno do servidor.' });
+  }
+});
+
 module.exports = router;
