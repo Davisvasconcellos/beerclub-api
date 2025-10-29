@@ -48,6 +48,57 @@ const User = sequelize.define('User', {
     allowNull: false,
     defaultValue: 'customer'
   },
+  google_id: {
+    type: DataTypes.STRING,
+    allowNull: true,
+    unique: true
+  },
+  avatar_url: {
+    type: DataTypes.STRING,
+    allowNull: true,
+  },
+  birth_date: {
+    type: DataTypes.DATEONLY,
+    allowNull: true
+  },
+  address_street: {
+    type: DataTypes.STRING,
+    allowNull: true
+  },
+  address_number: {
+    type: DataTypes.STRING(20),
+    allowNull: true
+  },
+  address_complement: {
+    type: DataTypes.STRING,
+    allowNull: true
+  },
+  address_neighborhood: {
+    type: DataTypes.STRING,
+    allowNull: true
+  },
+  address_city: {
+    type: DataTypes.STRING,
+    allowNull: true
+  },
+  address_state: {
+    type: DataTypes.STRING(2),
+    allowNull: true
+  },
+  address_zip_code: {
+    type: DataTypes.STRING(10),
+    allowNull: true
+  },
+  email_verified: {
+    type: DataTypes.BOOLEAN,
+    allowNull: false,
+    defaultValue: false
+  },
+  status: {
+    type: DataTypes.ENUM('active', 'inactive', 'pending_verification', 'banned'),
+    allowNull: false,
+    defaultValue: 'active'
+  },
   team_user: {
     type: DataTypes.INTEGER,
     allowNull: true,

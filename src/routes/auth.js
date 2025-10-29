@@ -56,11 +56,18 @@ router.post('/login', [
     // Buscar usuário
     const user = await User.findOne({
       where: { email },
-      include: [{
-        model: FootballTeam,
-        as: 'team',
-        attributes: ['name', 'short_name', 'abbreviation', 'shield']
-      }]
+      include: [
+        {
+          model: Plan,
+          as: 'plan',
+          attributes: ['id', 'name', 'description', 'price']
+        },
+        {
+          model: FootballTeam,
+          as: 'team',
+          attributes: ['name', 'short_name', 'abbreviation', 'shield']
+        }
+      ]
     });
 
     if (!user) {

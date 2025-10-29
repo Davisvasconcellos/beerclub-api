@@ -254,7 +254,21 @@ router.post('/', authenticateToken, requireRole('admin'), [
 router.put('/me', authenticateToken, [
   body('name').optional().isLength({ min: 2, max: 255 }).trim().withMessage('O nome deve ter entre 2 e 255 caracteres.'),
   body('phone').optional().isLength({ min: 10, max: 20 }).withMessage('O telefone deve ter entre 10 e 20 caracteres.'),
-  body('team_user').optional({ nullable: true }).isInt().withMessage('O ID do time deve ser um número inteiro.')
+  body('team_user').optional({ nullable: true }).isInt().withMessage('O ID do time deve ser um número inteiro.'),
+  body('avatar_url')
+    .optional({ nullable: true })
+    .customSanitizer(value => {
+      return value === '' ? null : value; // Converte string vazia para null
+    })
+    .isString().withMessage('O caminho do avatar deve ser uma string válida.'), // Alterado para isString
+  body('birth_date').optional({ nullable: true }).isISO8601().toDate().withMessage('Data de nascimento inválida.'),
+  body('address_street').optional({ nullable: true }).isString().trim(),
+  body('address_number').optional({ nullable: true }).isString().trim(),
+  body('address_complement').optional({ nullable: true }).isString().trim(),
+  body('address_neighborhood').optional({ nullable: true }).isString().trim(),
+  body('address_city').optional({ nullable: true }).isString().trim(),
+  body('address_state').optional({ nullable: true }).isString().isLength({ min: 2, max: 2 }),
+  body('address_zip_code').optional({ nullable: true }).isString().trim().isLength({ min: 8, max: 10 })
 ], async (req, res) => {
   try {
     const errors = validationResult(req);
@@ -268,8 +282,44 @@ router.put('/me', authenticateToken, [
     }
 
     // Apenas campos permitidos são atualizados
-    const { name, phone, team_user } = req.body;
-    await user.update({ name, phone, team_user });
+    const allowedUpdates = [
+      'name',
+      'phone',
+      'team_user',
+      'avatar_url',
+      'birth_date',
+      'address_street',
+      'address_number',
+      'address_complement',
+      'address_neighborhood',
+      'address_city',
+      'address_state',
+      'address_zip_code'
+    ];
+
+    const updateData = {};
+    for (const key of allowedUpdates) {
+      if (req.body[key] !== undefined) {
+        updateData[key] = req.body[key];
+      }
+    }
+    await user.update(updateData);
+
+    // Recarrega o usuário com as associações para retornar o objeto completo
+    await user.reload({
+      include: [
+        {
+          model: Plan,
+          as: 'plan',
+          attributes: ['id', 'name', 'description', 'price']
+        },
+        {
+          model: FootballTeam,
+          as: 'team',
+          attributes: ['name', 'short_name', 'abbreviation', 'shield']
+        }
+      ]
+    });
 
     res.json({ success: true, message: 'Seu perfil foi atualizado com sucesso.', data: { user: user.toJSON() } });
   } catch (error) {
@@ -279,13 +329,22 @@ router.put('/me', authenticateToken, [
 });
 
 // Atualizar usuário
-router.put('/:id_code', authenticateToken, requireRole('master', 'admin'), [
+router.put('/:id_code', authenticateToken, requireRole('admin'), [
   body('name').optional().isLength({ min: 2, max: 255 }).trim(),
   body('email').optional().isEmail().normalizeEmail(),
   body('role').optional().isIn(['admin', 'manager', 'waiter', 'customer']),
   body('phone').optional().isLength({ min: 10, max: 20 }),
   body('plan_id').optional().isInt(),
-  body('team_user').optional().isInt()
+  body('team_user').optional({ nullable: true }).isInt(),
+  body('avatar_url').optional({ nullable: true }).isURL().withMessage('URL do avatar inválida.'),
+  body('birth_date').optional({ nullable: true }).isISO8601().toDate().withMessage('Data de nascimento inválida.'),
+  body('address_street').optional({ nullable: true }).isString().trim(),
+  body('address_number').optional({ nullable: true }).isString().trim(),
+  body('address_complement').optional({ nullable: true }).isString().trim(),
+  body('address_neighborhood').optional({ nullable: true }).isString().trim(),
+  body('address_city').optional({ nullable: true }).isString().trim(),
+  body('address_state').optional({ nullable: true }).isString().isLength({ min: 2, max: 2 }),
+  body('address_zip_code').optional({ nullable: true }).isString().trim().isLength({ min: 8, max: 10 })
 ], async (req, res) => {
   try {
     const errors = validationResult(req);
@@ -298,7 +357,6 @@ router.put('/:id_code', authenticateToken, requireRole('master', 'admin'), [
     }
 
     const { id_code } = req.params;
-    const { name, email, role, phone, plan_id, team_user } = req.body;
 
     const user = await User.findOne({ where: { id_code } });
     if (!user) {
@@ -309,8 +367,9 @@ router.put('/:id_code', authenticateToken, requireRole('master', 'admin'), [
     }
 
     // Apenas 'master' pode definir outros como 'admin' ou 'master'
+    const { role } = req.body;
     if (role && ['master', 'admin'].includes(role) && req.user.role !== 'master') {
-      return res.status(403).json({
+      return res.status(403).json({ // Alterei para requireRole('admin') no início, então essa checagem é uma segurança extra para 'master'
         error: 'Insufficient permissions',
         message: 'Permissões insuficientes para definir esta role.'
       });
@@ -318,7 +377,7 @@ router.put('/:id_code', authenticateToken, requireRole('master', 'admin'), [
 
     if (team_user) {
       const team = await sequelize.models.FootballTeam.findByPk(team_user);
-      if (!team) {
+      if (!team && team_user !== null) { // Permite que team_user seja nulo
         return res.status(400).json({
           error: 'Invalid team',
           message: 'Time de futebol inválido'
@@ -326,7 +385,47 @@ router.put('/:id_code', authenticateToken, requireRole('master', 'admin'), [
       }
     }
 
-    await user.update({ name, email, role, phone, plan_id, team_user });
+    const allowedUpdates = [
+      'name',
+      'email',
+      'phone',
+      'role',
+      'plan_id',
+      'team_user',
+      'avatar_url',
+      'birth_date',
+      'address_street',
+      'address_number',
+      'address_complement',
+      'address_neighborhood',
+      'address_city',
+      'address_state',
+      'address_zip_code'
+    ];
+
+    const updateData = {};
+    for (const key of allowedUpdates) {
+      if (req.body[key] !== undefined) {
+        updateData[key] = req.body[key];
+      }
+    }
+    await user.update(updateData);
+
+    // Recarrega o usuário com as associações para retornar o objeto completo
+    await user.reload({
+      include: [
+        {
+          model: Plan,
+          as: 'plan',
+          attributes: ['id', 'name', 'description', 'price']
+        },
+        {
+          model: FootballTeam,
+          as: 'team',
+          attributes: ['name', 'short_name', 'abbreviation', 'shield']
+        }
+      ]
+    });
 
     res.json({
       success: true,
