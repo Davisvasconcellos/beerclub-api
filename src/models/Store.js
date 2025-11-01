@@ -15,9 +15,13 @@ const Store = sequelize.define('Store', {
       len: [1, 255]
     }
   },
-  legal_responsible: {
-    type: DataTypes.STRING(255),
-    allowNull: true
+  owner_id: {
+    type: DataTypes.INTEGER,
+    allowNull: true,
+    references: {
+      model: 'users',
+      key: 'id'
+    }
   },
   email: {
     type: DataTypes.STRING(255),

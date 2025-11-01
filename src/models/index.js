@@ -29,6 +29,12 @@ Order.belongsTo(Store, { foreignKey: 'store_id', as: 'store' });
 Store.hasMany(Message, { foreignKey: 'store_id', as: 'messages' });
 Message.belongsTo(Store, { foreignKey: 'store_id', as: 'store' });
 
+// Associação de Proprietário da Loja (Store Owner)
+User.hasMany(Store, { foreignKey: 'owner_id', as: 'ownedStores' });
+Store.belongsTo(User, { foreignKey: 'owner_id', as: 'owner' });
+
+
+
 // User associations
 User.hasMany(Order, { foreignKey: 'user_id', as: 'orders' });
 Order.belongsTo(User, { foreignKey: 'user_id', as: 'user' });

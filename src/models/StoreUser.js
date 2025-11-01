@@ -34,4 +34,10 @@ const StoreUser = sequelize.define('StoreUser', {
   updatedAt: false
 });
 
+// Adicionando a associação
+StoreUser.associate = (models) => {
+  StoreUser.belongsTo(models.Store, { foreignKey: 'store_id', as: 'store' });
+  StoreUser.belongsTo(models.User, { foreignKey: 'user_id', as: 'user' });
+};
+
 module.exports = StoreUser; 

@@ -1,7 +1,7 @@
 const express = require('express');
 const { body, validationResult } = require('express-validator');
 const { Store, User, Product, StoreUser } = require('../models');
-const { requireRole } = require('../middlewares/auth');
+const { authenticateToken, requireRole } = require('../middlewares/auth');
 
 const router = express.Router();
 
@@ -30,7 +30,7 @@ const router = express.Router();
  *       200:
  *         description: Lista de lojas
  */
-router.get('/', async (req, res) => {
+router.get('/', authenticateToken, async (req, res) => {
   try {
     const { page = 1, limit = 10, search } = req.query;
     const offset = (page - 1) * limit;
@@ -40,42 +40,52 @@ router.get('/', async (req, res) => {
       where.name = { [require('sequelize').Op.like]: `%${search}%` };
     }
 
-    // Se não for admin, mostrar apenas as lojas do usuário
-    if (req.user.role !== 'admin') {
-      const storeUsers = await StoreUser.findAll({
-        where: { user_id: req.user.id },
-        include: [{ model: Store, as: 'store' }]
-      });
-      const storeIds = storeUsers.map(su => su.store_id);
-      where.id = { [require('sequelize').Op.in]: storeIds };
+    // Se não for 'master', filtra as lojas para mostrar apenas as que o usuário é proprietário
+    if (req.user.role !== 'master') {
+      where.owner_id = req.user.userId;
+    }
+
+    // Calcula o total de lojas que o usuário pode ver
+    let totalPlatformStores;
+    if (req.user.role === 'master') {
+      // Para master, conta todas as lojas da plataforma.
+      totalPlatformStores = await Store.count();
+    } else {
+      // Para outros usuários, conta apenas as lojas que eles possuem.
+      // O `where` já contém o filtro de owner_id.
+      totalPlatformStores = await Store.count({ where });
     }
 
     const { count, rows: stores } = await Store.findAndCountAll({
       where,
       include: [
         {
+          model: User, as: 'owner', attributes: ['id_code', 'name', 'email']
+        }, {
           model: User,
           as: 'users',
-          attributes: ['id', 'name', 'role'],
+          attributes: ['id_code', 'name', 'role'],
           through: { attributes: ['role'] }
         }
       ],
       limit: parseInt(limit),
       offset: parseInt(offset),
-      order: [['createdAt', 'DESC']]
+      order: [['created_at', 'DESC']]
     });
+
+    const responseData = {
+      stores,
+      pagination: {
+        page: parseInt(page),
+        limit: parseInt(limit),
+        total: count,
+        pages: Math.ceil(count / limit)
+      }
+    };    responseData.totalPlatformStores = totalPlatformStores;
 
     res.json({
       success: true,
-      data: {
-        stores,
-        pagination: {
-          page: parseInt(page),
-          limit: parseInt(limit),
-          total: count,
-          pages: Math.ceil(count / limit)
-        }
-      }
+      data: responseData
     });
 
   } catch (error) {
@@ -112,9 +122,12 @@ router.get('/:id', async (req, res) => {
     const store = await Store.findByPk(id, {
       include: [
         {
+          model: User, as: 'owner', attributes: ['id_code', 'name', 'email']
+        },
+        {
           model: User,
           as: 'users',
-          attributes: ['id', 'name', 'email', 'role'],
+          attributes: ['id_code', 'name', 'email', 'role'],
           through: { attributes: ['role'] }
         },
         {
@@ -163,7 +176,6 @@ router.get('/:id', async (req, res) => {
  *             required:
  *               - name
  *               - legal_responsible
- *               - email
  *               - cnpj
  *     responses:
  *       201:
@@ -173,7 +185,6 @@ router.post('/',
   requireRole(['admin']),
   [
     body('name').trim().isLength({ min: 2, max: 255 }).withMessage('Nome deve ter entre 2 e 255 caracteres'),
-    body('legal_responsible').trim().isLength({ min: 2, max: 255 }).withMessage('Responsável legal deve ter entre 2 e 255 caracteres'),
     body('email').isEmail().withMessage('Email inválido'),
     body('cnpj').isLength({ min: 14, max: 18 }).withMessage('CNPJ inválido'),
     body('logo_url').optional().isURL().withMessage('URL do logo inválida'),
@@ -193,7 +204,6 @@ router.post('/',
 
       const {
         name,
-        legal_responsible,
         email,
         cnpj,
         logo_url,
@@ -212,7 +222,7 @@ router.post('/',
 
       const store = await Store.create({
         name,
-        legal_responsible,
+        owner_id: req.user.userId, // Atribui o usuário logado como dono
         email,
         cnpj,
         logo_url,
@@ -264,7 +274,6 @@ router.put('/:id',
   requireRole(['admin', 'manager']),
   [
     body('name').optional().trim().isLength({ min: 2, max: 255 }).withMessage('Nome deve ter entre 2 e 255 caracteres'),
-    body('legal_responsible').optional().trim().isLength({ min: 2, max: 255 }).withMessage('Responsável legal deve ter entre 2 e 255 caracteres'),
     body('email').optional().isEmail().withMessage('Email inválido'),
     body('logo_url').optional().isURL().withMessage('URL do logo inválida'),
     body('instagram_handle').optional().trim().isLength({ max: 100 }).withMessage('Instagram deve ter no máximo 100 caracteres'),
