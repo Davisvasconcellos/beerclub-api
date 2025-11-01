@@ -58,6 +58,7 @@ router.get('/', authenticateToken, async (req, res) => {
 
     const { count, rows: stores } = await Store.findAndCountAll({
       where,
+      // Os campos novos já são retornados por padrão, pois não há `attributes` limitando a busca principal.
       include: [
         {
           model: User, as: 'owner', attributes: ['id_code', 'name', 'email']
@@ -115,11 +116,12 @@ router.get('/', authenticateToken, async (req, res) => {
  *       200:
  *         description: Dados da loja
  */
-router.get('/:id', async (req, res) => {
+router.get('/:id', authenticateToken, async (req, res) => {
   try {
     const { id } = req.params;
 
     const store = await Store.findByPk(id, {
+      // Os campos novos já são retornados por padrão, pois não há `attributes` limitando a busca principal.
       include: [
         {
           model: User, as: 'owner', attributes: ['id_code', 'name', 'email']
@@ -182,14 +184,31 @@ router.get('/:id', async (req, res) => {
  *         description: Loja criada com sucesso
  */
 router.post('/', 
+  authenticateToken,
   requireRole(['admin']),
   [
+    // Validações existentes
     body('name').trim().isLength({ min: 2, max: 255 }).withMessage('Nome deve ter entre 2 e 255 caracteres'),
     body('email').isEmail().withMessage('Email inválido'),
     body('cnpj').isLength({ min: 14, max: 18 }).withMessage('CNPJ inválido'),
     body('logo_url').optional().isURL().withMessage('URL do logo inválida'),
     body('instagram_handle').optional().trim().isLength({ max: 100 }).withMessage('Instagram deve ter no máximo 100 caracteres'),
-    body('facebook_handle').optional().trim().isLength({ max: 100 }).withMessage('Facebook deve ter no máximo 100 caracteres')
+    body('facebook_handle').optional().trim().isLength({ max: 100 }).withMessage('Facebook deve ter no máximo 100 caracteres'),
+    // Novas validações
+    body('capacity').optional().isInt({ min: 0 }).withMessage('Capacidade deve ser um número inteiro positivo'),
+    body('type').optional().isIn(['bar', 'restaurante', 'pub', 'cervejaria', 'casa noturna']).withMessage('Tipo de estabelecimento inválido'),
+    body('legal_name').optional().isString().trim(),
+    body('phone').optional().isString().trim(),
+    body('zip_code').optional().isString().trim(),
+    body('address_street').optional().isString().trim(),
+    body('address_neighborhood').optional().isString().trim(),
+    body('address_state').optional().isString().trim().isLength({ min: 2, max: 2 }).withMessage('UF deve ter 2 caracteres'),
+    body('address_number').optional().isString().trim(),
+    body('address_complement').optional().isString().trim(),
+    body('banner_url').optional().isURL().withMessage('URL do banner inválida'),
+    body('website').optional().isURL().withMessage('URL do site inválida'),
+    body('latitude').optional().isDecimal().withMessage('Latitude inválida'),
+    body('longitude').optional().isDecimal().withMessage('Longitude inválida')
   ],
   async (req, res) => {
     try {
@@ -208,7 +227,22 @@ router.post('/',
         cnpj,
         logo_url,
         instagram_handle,
-        facebook_handle
+        facebook_handle,
+        // Novos campos
+        capacity,
+        type,
+        legal_name,
+        phone,
+        zip_code,
+        address_street,
+        address_neighborhood,
+        address_state,
+        address_number,
+        address_complement,
+        banner_url,
+        website,
+        latitude,
+        longitude
       } = req.body;
 
       // Verificar se CNPJ já existe
@@ -216,7 +250,7 @@ router.post('/',
       if (existingStore) {
         return res.status(400).json({
           error: 'Validation error',
-          message: 'CNPJ já cadastrado'
+          message: 'CNPJ já utilizado'
         });
       }
 
@@ -227,7 +261,22 @@ router.post('/',
         cnpj,
         logo_url,
         instagram_handle,
-        facebook_handle
+        facebook_handle,
+        // Novos campos
+        capacity,
+        type,
+        legal_name,
+        phone,
+        zip_code,
+        address_street,
+        address_neighborhood,
+        address_state,
+        address_number,
+        address_complement,
+        banner_url,
+        website,
+        latitude,
+        longitude
       });
 
       res.status(201).json({
@@ -271,13 +320,31 @@ router.post('/',
  *         description: Loja atualizada com sucesso
  */
 router.put('/:id',
+  authenticateToken,
   requireRole(['admin', 'manager']),
   [
+    // Campos originais
     body('name').optional().trim().isLength({ min: 2, max: 255 }).withMessage('Nome deve ter entre 2 e 255 caracteres'),
     body('email').optional().isEmail().withMessage('Email inválido'),
+    body('cnpj').optional().isLength({ min: 14, max: 18 }).withMessage('CNPJ inválido'),
     body('logo_url').optional().isURL().withMessage('URL do logo inválida'),
     body('instagram_handle').optional().trim().isLength({ max: 100 }).withMessage('Instagram deve ter no máximo 100 caracteres'),
-    body('facebook_handle').optional().trim().isLength({ max: 100 }).withMessage('Facebook deve ter no máximo 100 caracteres')
+    body('facebook_handle').optional().trim().isLength({ max: 100 }).withMessage('Facebook deve ter no máximo 100 caracteres'),
+    // Novos campos
+    body('capacity').optional().isInt({ min: 0 }).withMessage('Capacidade deve ser um número inteiro positivo'),
+    body('type').optional().isIn(['bar', 'restaurante', 'pub', 'cervejaria', 'casa noturna']).withMessage('Tipo de estabelecimento inválido'),
+    body('legal_name').optional().isString().trim(),
+    body('phone').optional().isString().trim(),
+    body('zip_code').optional().isString().trim(),
+    body('address_street').optional().isString().trim(),
+    body('address_neighborhood').optional().isString().trim(),
+    body('address_state').optional().isString().trim().isLength({ min: 2, max: 2 }).withMessage('UF deve ter 2 caracteres'),
+    body('address_number').optional().isString().trim(),
+    body('address_complement').optional().isString().trim(),
+    body('banner_url').optional().isURL().withMessage('URL do banner inválida'),
+    body('website').optional().isURL().withMessage('URL do site inválida'),
+    body('latitude').optional().isDecimal().withMessage('Latitude inválida'),
+    body('longitude').optional().isDecimal().withMessage('Longitude inválida')
   ],
   async (req, res) => {
     try {
@@ -300,8 +367,13 @@ router.put('/:id',
         });
       }
 
-      // Verificar permissão (apenas admin pode editar qualquer loja)
-      if (req.user.role !== 'admin') {
+      // Verificar permissão
+      // O proprietário da loja (owner) ou um 'master' podem editar.
+      // Um 'manager' associado à loja também pode editar.
+      const isOwner = store.owner_id === req.user.userId;
+      const isMaster = req.user.role === 'master';
+
+      if (!isOwner && !isMaster && req.user.role !== 'admin') {
         const storeUser = await StoreUser.findOne({
           where: { user_id: req.user.id, store_id: id }
         });
@@ -311,6 +383,30 @@ router.put('/:id',
             message: 'Sem permissão para editar esta loja'
           });
         }
+      }
+
+      // Regra especial para atualização de CNPJ
+      const isCnpjUpdateAttempt = req.body.cnpj && req.body.cnpj !== store.cnpj;
+
+      if (isCnpjUpdateAttempt) {
+        // REGRA 1: Apenas 'master' pode TENTAR alterar o CNPJ.
+        if (req.user.role !== 'master') {
+          return res.status(403).json({
+            error: 'Forbidden',
+            message: 'Apenas um usuário master pode alterar o CNPJ.'
+          });
+        }
+
+        // REGRA 2: Se for master, verificar se o NOVO CNPJ já existe em outra loja.
+        const existingStore = await Store.findOne({ where: { cnpj: req.body.cnpj } });
+        if (existingStore) {
+          return res.status(400).json({ error: 'Validation error', message: 'CNPJ já utilizado por outra loja.' });
+        }
+      }
+
+      // Se não for master, remove o campo CNPJ do corpo da requisição para garantir que ele não seja atualizado.
+      if (req.user.role !== 'master') {
+        delete req.body.cnpj;
       }
 
       await store.update(req.body);
@@ -350,6 +446,7 @@ router.put('/:id',
  *         description: Loja deletada com sucesso
  */
 router.delete('/:id',
+  authenticateToken,
   requireRole(['admin']),
   async (req, res) => {
     try {

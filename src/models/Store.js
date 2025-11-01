@@ -30,6 +30,68 @@ const Store = sequelize.define('Store', {
       isEmail: true
     }
   },
+  capacity: {
+    type: DataTypes.INTEGER,
+    allowNull: true
+  },
+  type: {
+    type: DataTypes.ENUM('bar', 'restaurante', 'pub', 'cervejaria', 'casa noturna'),
+    allowNull: true
+  },
+  legal_name: {
+    type: DataTypes.STRING,
+    allowNull: true
+  },
+  phone: {
+    type: DataTypes.STRING(20),
+    allowNull: true
+  },
+  zip_code: {
+    type: DataTypes.STRING(10),
+    allowNull: true
+  },
+  address_street: {
+    type: DataTypes.STRING,
+    allowNull: true
+  },
+  address_neighborhood: {
+    type: DataTypes.STRING,
+    allowNull: true
+  },
+  address_state: {
+    type: DataTypes.STRING(2),
+    allowNull: true
+  },
+  address_number: {
+    type: DataTypes.STRING(20),
+    allowNull: true
+  },
+  address_complement: {
+    type: DataTypes.STRING,
+    allowNull: true
+  },
+  banner_url: {
+    type: DataTypes.STRING,
+    allowNull: true,
+    validate: {
+      isUrl: true
+    }
+  },
+  website: {
+    type: DataTypes.STRING,
+    allowNull: true,
+    validate: {
+      isUrl: true
+    }
+  },
+  latitude: {
+    type: DataTypes.DECIMAL(10, 8),
+    allowNull: true
+  },
+  longitude: {
+    type: DataTypes.DECIMAL(11, 8),
+    allowNull: true
+  },
   cnpj: {
     type: DataTypes.STRING(20),
     allowNull: true
