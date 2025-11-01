@@ -12,6 +12,7 @@ const Order = require('./Order');
 const OrderItem = require('./OrderItem');
 const PixPayment = require('./PixPayment');
 const Message = require('./Message');
+const StoreSchedule = require('./StoreSchedule');
 
 // Define associations
 
@@ -32,6 +33,10 @@ Message.belongsTo(Store, { foreignKey: 'store_id', as: 'store' });
 // Associação de Proprietário da Loja (Store Owner)
 User.hasMany(Store, { foreignKey: 'owner_id', as: 'ownedStores' });
 Store.belongsTo(User, { foreignKey: 'owner_id', as: 'owner' });
+
+// Associação de Horários da Loja (Store Schedules)
+Store.hasMany(StoreSchedule, { foreignKey: 'store_id', as: 'schedules' });
+StoreSchedule.belongsTo(Store, { foreignKey: 'store_id', as: 'store' });
 
 
 
@@ -89,5 +94,6 @@ module.exports = {
   PixPayment,
   Message,
   FootballTeam,
-  TokenBlocklist
+  TokenBlocklist,
+  StoreSchedule
 }; 

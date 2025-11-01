@@ -1,11 +1,17 @@
 const { DataTypes } = require('sequelize');
 const { sequelize } = require('../config/database');
+const { v4: uuidv4 } = require('uuid');
 
 const Store = sequelize.define('Store', {
   id: {
     type: DataTypes.INTEGER,
     primaryKey: true,
     autoIncrement: true
+  },
+  id_code: {
+    type: DataTypes.STRING(255),
+    allowNull: true, // Permitir nulo temporariamente para o hook funcionar
+    unique: true
   },
   name: {
     type: DataTypes.STRING(255),
@@ -115,7 +121,12 @@ const Store = sequelize.define('Store', {
   tableName: 'stores',
   timestamps: true,
   createdAt: 'created_at',
-  updatedAt: false
+  updatedAt: false,
+  hooks: {
+    beforeCreate: (store) => {
+      store.id_code = uuidv4();
+    }
+  }
 });
 
 module.exports = Store; 

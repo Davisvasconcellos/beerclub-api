@@ -1,6 +1,6 @@
 const express = require('express');
 const { body, validationResult } = require('express-validator');
-const { Store, User, Product, StoreUser } = require('../models');
+const { sequelize, Store, User, Product, StoreUser, StoreSchedule } = require('../models');
 const { authenticateToken, requireRole } = require('../middlewares/auth');
 
 const router = express.Router();
@@ -100,27 +100,28 @@ router.get('/', authenticateToken, async (req, res) => {
 
 /**
  * @swagger
- * /api/v1/stores/{id}:
+ * /api/v1/stores/{id_code}:
  *   get:
- *     summary: Obter loja por ID
+ *     summary: Obter loja por ID Code
  *     tags: [Stores]
  *     security:
  *       - bearerAuth: []
  *     parameters:
  *       - in: path
- *         name: id
+ *         name: id_code
  *         required: true
  *         schema:
- *           type: integer
+ *           type: string
  *     responses:
  *       200:
  *         description: Dados da loja
  */
-router.get('/:id', authenticateToken, async (req, res) => {
+router.get('/:id_code', authenticateToken, async (req, res) => {
   try {
-    const { id } = req.params;
+    const { id_code } = req.params;
 
-    const store = await Store.findByPk(id, {
+    const store = await Store.findOne({
+      where: { id_code },
       // Os campos novos já são retornados por padrão, pois não há `attributes` limitando a busca principal.
       include: [
         {
@@ -211,6 +212,8 @@ router.post('/',
     body('longitude').optional().isDecimal().withMessage('Longitude inválida')
   ],
   async (req, res) => {
+    const transaction = await sequelize.transaction();
+
     try {
       const errors = validationResult(req);
       if (!errors.isEmpty()) {
@@ -254,38 +257,55 @@ router.post('/',
         });
       }
 
-      const store = await Store.create({
-        name,
-        owner_id: req.user.userId, // Atribui o usuário logado como dono
-        email,
-        cnpj,
-        logo_url,
-        instagram_handle,
-        facebook_handle,
-        // Novos campos
-        capacity,
-        type,
-        legal_name,
-        phone,
-        zip_code,
-        address_street,
-        address_neighborhood,
-        address_state,
-        address_number,
-        address_complement,
-        banner_url,
-        website,
-        latitude,
-        longitude
-      });
+      const store = await Store.create(
+        {
+          name,
+          owner_id: req.user.userId, // Atribui o usuário logado como dono
+          email,
+          cnpj,
+          logo_url,
+          instagram_handle,
+          facebook_handle,
+          // Novos campos
+          capacity,
+          type,
+          legal_name,
+          phone,
+          zip_code,
+          address_street,
+          address_neighborhood,
+          address_state,
+          address_number,
+          address_complement,
+          banner_url,
+          website,
+          latitude,
+          longitude
+        },
+        { transaction }
+      );
+
+      // Criar os 7 dias de horário padrão (fechado)
+      const schedules = [];
+      for (let i = 0; i < 7; i++) {
+        schedules.push({
+          store_id: store.id,
+          day_of_week: i,
+          is_open: false
+        });
+      }
+      await StoreSchedule.bulkCreate(schedules, { transaction });
+
+      await transaction.commit();
 
       res.status(201).json({
         success: true,
         message: 'Loja criada com sucesso',
-        data: store
+        data: store // O hook afterCreate do id_code ainda funcionará
       });
 
     } catch (error) {
+      await transaction.rollback();
       console.error('Create store error:', error);
       res.status(500).json({
         error: 'Internal server error',
@@ -297,7 +317,7 @@ router.post('/',
 
 /**
  * @swagger
- * /api/v1/stores/{id}:
+ * /api/v1/stores/{id_code}:
  *   put:
  *     summary: Atualizar loja
  *     tags: [Stores]
@@ -305,10 +325,10 @@ router.post('/',
  *       - bearerAuth: []
  *     parameters:
  *       - in: path
- *         name: id
+ *         name: id_code
  *         required: true
  *         schema:
- *           type: integer
+ *           type: string
  *     requestBody:
  *       required: true
  *       content:
@@ -319,7 +339,7 @@ router.post('/',
  *       200:
  *         description: Loja atualizada com sucesso
  */
-router.put('/:id',
+router.put('/:id_code',
   authenticateToken,
   requireRole(['admin', 'manager']),
   [
@@ -348,7 +368,7 @@ router.put('/:id',
   ],
   async (req, res) => {
     try {
-      const { id } = req.params;
+      const { id_code } = req.params;
       const errors = validationResult(req);
       
       if (!errors.isEmpty()) {
@@ -359,7 +379,7 @@ router.put('/:id',
         });
       }
 
-      const store = await Store.findByPk(id);
+      const store = await Store.findOne({ where: { id_code } });
       if (!store) {
         return res.status(404).json({
           error: 'Not Found',
@@ -375,7 +395,7 @@ router.put('/:id',
 
       if (!isOwner && !isMaster && req.user.role !== 'admin') {
         const storeUser = await StoreUser.findOne({
-          where: { user_id: req.user.id, store_id: id }
+          where: { user_id: req.user.id, store_id: store.id }
         });
         if (!storeUser) {
           return res.status(403).json({
@@ -429,7 +449,7 @@ router.put('/:id',
 
 /**
  * @swagger
- * /api/v1/stores/{id}:
+ * /api/v1/stores/{id_code}:
  *   delete:
  *     summary: Deletar loja
  *     tags: [Stores]
@@ -437,22 +457,22 @@ router.put('/:id',
  *       - bearerAuth: []
  *     parameters:
  *       - in: path
- *         name: id
+ *         name: id_code
  *         required: true
  *         schema:
- *           type: integer
+ *           type: string
  *     responses:
  *       200:
  *         description: Loja deletada com sucesso
  */
-router.delete('/:id',
+router.delete('/:id_code',
   authenticateToken,
   requireRole(['admin']),
   async (req, res) => {
     try {
-      const { id } = req.params;
+      const { id_code } = req.params;
 
-      const store = await Store.findByPk(id);
+      const store = await Store.findOne({ where: { id_code } });
       if (!store) {
         return res.status(404).json({
           error: 'Not Found',
@@ -461,7 +481,7 @@ router.delete('/:id',
       }
 
       // Verificar se há produtos associados
-      const productCount = await Product.count({ where: { store_id: id } });
+      const productCount = await Product.count({ where: { store_id: store.id } });
       if (productCount > 0) {
         return res.status(400).json({
           error: 'Validation error',
@@ -482,6 +502,119 @@ router.delete('/:id',
         error: 'Internal server error',
         message: 'Erro interno do servidor'
       });
+    }
+  }
+);
+
+/**
+ * @swagger
+ * /api/v1/stores/{id_code}/schedule:
+ *   put:
+ *     summary: Atualizar os horários de funcionamento de uma loja
+ *     tags: [Stores]
+ *     security:
+ *       - bearerAuth: []
+ *     parameters:
+ *       - in: path
+ *         name: id_code
+ *         required: true
+ *         schema:
+ *           type: string
+ *         description: O ID Code da loja
+ *     requestBody:
+ *       required: true
+ *       content:
+ *         application/json:
+ *           schema:
+ *             type: array
+ *             items:
+ *               type: object
+ *               properties:
+ *                 day_of_week:
+ *                   type: integer
+ *                   example: 1
+ *                 is_open:
+ *                   type: boolean
+ *                   example: true
+ *                 opening_time:
+ *                   type: string
+ *                   example: "09:00"
+ *                 closing_time:
+ *                   type: string
+ *                   example: "22:00"
+ *     responses:
+ *       200:
+ *         description: Horários atualizados com sucesso
+ */
+router.put('/:id_code/schedule',
+  authenticateToken,
+  requireRole(['admin', 'manager']),
+  [
+    body().isArray({ min: 1, max: 7 }).withMessage('O corpo da requisição deve ser um array com 1 a 7 dias.'),
+    body('*.day_of_week').isInt({ min: 0, max: 6 }).withMessage('day_of_week deve ser um número entre 0 e 6.'),
+    body('*.is_open').isBoolean().withMessage('is_open deve ser um valor booleano.'),
+    body('*.opening_time').matches(/^([0-1]?[0-9]|2[0-3]):[0-5][0-9]$/).optional({ nullable: true }).withMessage('opening_time deve estar no formato HH:MM.'),
+    body('*.closing_time').matches(/^([0-1]?[0-9]|2[0-3]):[0-5][0-9]$/).optional({ nullable: true }).withMessage('closing_time deve estar no formato HH:MM.')
+  ],
+  async (req, res) => {
+    const transaction = await sequelize.transaction();
+    try {
+      const { id_code } = req.params;
+      const errors = validationResult(req);
+      if (!errors.isEmpty()) {
+        return res.status(400).json({ error: 'Validation error', details: errors.array() });
+      }
+
+      const store = await Store.findOne({ where: { id_code } });
+      if (!store) {
+        return res.status(404).json({ error: 'Not Found', message: 'Loja não encontrada' });
+      }
+
+      // Verificar permissão (proprietário, master, admin ou manager da loja)
+      const isOwner = store.owner_id === req.user.userId;
+      const isMaster = req.user.role === 'master';
+      if (!isOwner && !isMaster && req.user.role !== 'admin') {
+        const storeUser = await StoreUser.findOne({ where: { user_id: req.user.userId, store_id: store.id } });
+        if (!storeUser) {
+          return res.status(403).json({ error: 'Forbidden', message: 'Sem permissão para editar os horários desta loja' });
+        }
+      }
+
+      const schedules = req.body;
+
+      for (const schedule of schedules) {
+        await StoreSchedule.update(
+          {
+            is_open: schedule.is_open,
+            opening_time: schedule.is_open ? schedule.opening_time : null,
+            closing_time: schedule.is_open ? schedule.closing_time : null,
+          },
+          {
+            where: { store_id: store.id, day_of_week: schedule.day_of_week },
+            transaction
+          }
+        );
+      }
+
+      await transaction.commit();
+
+      // Após o commit, busca e retorna todos os horários atualizados da loja
+      const updatedSchedules = await StoreSchedule.findAll({
+        where: { store_id: store.id },
+        order: [['day_of_week', 'ASC']],
+        attributes: { exclude: ['id', 'store_id', 'created_at', 'updated_at'] }
+      });
+
+      res.json({
+        success: true,
+        message: 'Horários de funcionamento atualizados com sucesso.',
+        data: updatedSchedules
+      });
+      
+    } catch (error) {
+      await transaction.rollback();
+      console.error('Update schedule error:', error);
+      res.status(500).json({ error: 'Internal server error', message: 'Erro interno do servidor' });
     }
   }
 );
