@@ -67,11 +67,20 @@ router.get('/', authenticateToken, async (req, res) => {
           as: 'users',
           attributes: ['id_code', 'name', 'role'],
           through: { attributes: ['role'] }
+        },
+        {
+          model: StoreSchedule,
+          as: 'schedules',
+          attributes: { exclude: ['id', 'store_id', 'created_at', 'updated_at'] }
         }
       ],
       limit: parseInt(limit),
       offset: parseInt(offset),
-      order: [['created_at', 'DESC']]
+      order: [
+        ['created_at', 'DESC'],
+        // Garante que os horários dentro de cada loja venham ordenados por dia da semana
+        [{ model: StoreSchedule, as: 'schedules' }, 'day_of_week', 'ASC']
+      ]
     });
 
     const responseData = {
@@ -147,6 +156,13 @@ router.get('/:id_code', authenticateToken, async (req, res) => {
         message: 'Loja não encontrada'
       });
     }
+
+    // Adiciona o include dos horários aqui também
+    store.dataValues.schedules = await StoreSchedule.findAll({
+      where: { store_id: store.id },
+      order: [['day_of_week', 'ASC']],
+      attributes: { exclude: ['id', 'store_id', 'created_at', 'updated_at'] }
+    });
 
     res.json({
       success: true,
