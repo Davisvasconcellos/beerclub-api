@@ -43,8 +43,8 @@ async function seedDatabase() {
     const stores = await Store.bulkCreate([
       {
         name: 'Bar do João',
-        legal_responsible: 'João Silva',
         email: 'joao@bardojoao.com',
+        owner_id: 2, // ID do usuário 'João Silva'
         cnpj: '12.345.678/0001-90',
         logo_url: 'https://example.com/logo1.jpg',
         instagram_handle: '@bardojoao',
@@ -52,8 +52,8 @@ async function seedDatabase() {
       },
       {
         name: 'Cervejaria Artesanal',
-        legal_responsible: 'Maria Santos',
         email: 'maria@cervejaria.com',
+        owner_id: 3, // ID do usuário 'Maria Santos'
         cnpj: '98.765.432/0001-10',
         logo_url: 'https://example.com/logo2.jpg',
         instagram_handle: '@cervejariaartesanal',
@@ -61,8 +61,8 @@ async function seedDatabase() {
       },
       {
         name: 'Pub Irlandês',
-        legal_responsible: 'Pedro O\'Connor',
         email: 'pedro@pubirlandes.com',
+        owner_id: 4, // ID do usuário 'Pedro O'Connor'
         cnpj: '11.222.333/0001-44',
         logo_url: 'https://example.com/logo3.jpg',
         instagram_handle: '@pubirlandes',

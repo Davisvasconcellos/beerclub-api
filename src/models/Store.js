@@ -1,6 +1,6 @@
 const { DataTypes } = require('sequelize');
 const { sequelize } = require('../config/database');
-const { v4: uuidv4 } = require('uuid');
+const { v4: uuidv4 } = require('uuid'); // Garante que o uuid está importado
 
 const Store = sequelize.define('Store', {
   id: {
@@ -79,16 +79,10 @@ const Store = sequelize.define('Store', {
   banner_url: {
     type: DataTypes.STRING,
     allowNull: true,
-    validate: {
-      isUrl: true
-    }
   },
   website: {
     type: DataTypes.STRING,
     allowNull: true,
-    validate: {
-      isUrl: true
-    }
   },
   latitude: {
     type: DataTypes.DECIMAL(10, 8),
@@ -105,9 +99,6 @@ const Store = sequelize.define('Store', {
   logo_url: {
     type: DataTypes.STRING(255),
     allowNull: true,
-    validate: {
-      isUrl: true
-    }
   },
   instagram_handle: {
     type: DataTypes.STRING(100),
@@ -116,6 +107,10 @@ const Store = sequelize.define('Store', {
   facebook_handle: {
     type: DataTypes.STRING(100),
     allowNull: true
+  },
+  description: {
+    type: DataTypes.TEXT,
+    allowNull: true
   }
 }, {
   tableName: 'stores',
@@ -123,7 +118,7 @@ const Store = sequelize.define('Store', {
   createdAt: 'created_at',
   updatedAt: false,
   hooks: {
-    beforeCreate: (store) => {
+    beforeCreate: (store) => { // O hook beforeCreate garante que toda nova loja terá um id_code
       store.id_code = uuidv4();
     }
   }

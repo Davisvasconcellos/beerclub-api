@@ -196,6 +196,7 @@ router.get('/:id_code', authenticateToken, async (req, res) => {
  *               - name
  *               - legal_responsible
  *               - cnpj
+ *               - description
  *     responses:
  *       201:
  *         description: Loja criada com sucesso
@@ -208,24 +209,25 @@ router.post('/',
     body('name').trim().isLength({ min: 2, max: 255 }).withMessage('Nome deve ter entre 2 e 255 caracteres'),
     body('email').isEmail().withMessage('Email inválido'),
     body('cnpj').isLength({ min: 14, max: 18 }).withMessage('CNPJ inválido'),
-    body('logo_url').optional().isURL().withMessage('URL do logo inválida'),
+    body('logo_url').optional().isURL({ require_tld: false }).withMessage('URL do logo inválida'),
     body('instagram_handle').optional().trim().isLength({ max: 100 }).withMessage('Instagram deve ter no máximo 100 caracteres'),
     body('facebook_handle').optional().trim().isLength({ max: 100 }).withMessage('Facebook deve ter no máximo 100 caracteres'),
     // Novas validações
     body('capacity').optional().isInt({ min: 0 }).withMessage('Capacidade deve ser um número inteiro positivo'),
-    body('type').optional().isIn(['bar', 'restaurante', 'pub', 'cervejaria', 'casa noturna']).withMessage('Tipo de estabelecimento inválido'),
+    body('type').optional().isIn(['bar', 'restaurante', 'pub', 'cervejaria', 'casa noturna', 'distribuidora']).withMessage('Tipo de estabelecimento inválido'),
     body('legal_name').optional().isString().trim(),
     body('phone').optional().isString().trim(),
-    body('zip_code').optional().isString().trim(),
     body('address_street').optional().isString().trim(),
     body('address_neighborhood').optional().isString().trim(),
     body('address_state').optional().isString().trim().isLength({ min: 2, max: 2 }).withMessage('UF deve ter 2 caracteres'),
     body('address_number').optional().isString().trim(),
     body('address_complement').optional().isString().trim(),
-    body('banner_url').optional().isURL().withMessage('URL do banner inválida'),
-    body('website').optional().isURL().withMessage('URL do site inválida'),
+    body('banner_url').optional().isURL({ require_tld: false }).withMessage('URL do banner inválida'),
+    body('website').optional().isURL({ require_tld: false }).withMessage('URL do site inválida'),
     body('latitude').optional().isDecimal().withMessage('Latitude inválida'),
-    body('longitude').optional().isDecimal().withMessage('Longitude inválida')
+    body('longitude').optional().isDecimal().withMessage('Longitude inválida'),
+    body('zip_code').optional().isString().trim(), // Movido para manter a ordem
+    body('description').optional().isString().trim().escape().withMessage('Descrição inválida')
   ],
   async (req, res) => {
     const transaction = await sequelize.transaction();
@@ -252,7 +254,6 @@ router.post('/',
         type,
         legal_name,
         phone,
-        zip_code,
         address_street,
         address_neighborhood,
         address_state,
@@ -261,7 +262,9 @@ router.post('/',
         banner_url,
         website,
         latitude,
-        longitude
+        longitude,
+        zip_code,
+        description
       } = req.body;
 
       // Verificar se CNPJ já existe
@@ -296,7 +299,8 @@ router.post('/',
           banner_url,
           website,
           latitude,
-          longitude
+          longitude,
+          description
         },
         { transaction }
       );
@@ -363,24 +367,25 @@ router.put('/:id_code',
     body('name').optional().trim().isLength({ min: 2, max: 255 }).withMessage('Nome deve ter entre 2 e 255 caracteres'),
     body('email').optional().isEmail().withMessage('Email inválido'),
     body('cnpj').optional().isLength({ min: 14, max: 18 }).withMessage('CNPJ inválido'),
-    body('logo_url').optional().isURL().withMessage('URL do logo inválida'),
+    body('logo_url').optional().isURL({ require_tld: false }).withMessage('URL do logo inválida'),
     body('instagram_handle').optional().trim().isLength({ max: 100 }).withMessage('Instagram deve ter no máximo 100 caracteres'),
     body('facebook_handle').optional().trim().isLength({ max: 100 }).withMessage('Facebook deve ter no máximo 100 caracteres'),
     // Novos campos
     body('capacity').optional().isInt({ min: 0 }).withMessage('Capacidade deve ser um número inteiro positivo'),
-    body('type').optional().isIn(['bar', 'restaurante', 'pub', 'cervejaria', 'casa noturna']).withMessage('Tipo de estabelecimento inválido'),
+    body('type').optional().isIn(['bar', 'restaurante', 'pub', 'cervejaria', 'casa noturna', 'distribuidora']).withMessage('Tipo de estabelecimento inválido'),
     body('legal_name').optional().isString().trim(),
     body('phone').optional().isString().trim(),
-    body('zip_code').optional().isString().trim(),
     body('address_street').optional().isString().trim(),
     body('address_neighborhood').optional().isString().trim(),
     body('address_state').optional().isString().trim().isLength({ min: 2, max: 2 }).withMessage('UF deve ter 2 caracteres'),
     body('address_number').optional().isString().trim(),
     body('address_complement').optional().isString().trim(),
-    body('banner_url').optional().isURL().withMessage('URL do banner inválida'),
-    body('website').optional().isURL().withMessage('URL do site inválida'),
+    body('banner_url').optional().isURL({ require_tld: false }).withMessage('URL do banner inválida'),
+    body('website').optional().isURL({ require_tld: false }).withMessage('URL do site inválida'),
     body('latitude').optional().isDecimal().withMessage('Latitude inválida'),
-    body('longitude').optional().isDecimal().withMessage('Longitude inválida')
+    body('longitude').optional().isDecimal().withMessage('Longitude inválida'),
+    body('zip_code').optional().isString().trim(), // Movido para manter a ordem
+    body('description').optional().isString().trim().escape().withMessage('Descrição inválida')
   ],
   async (req, res) => {
     try {

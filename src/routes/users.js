@@ -336,7 +336,7 @@ router.put('/:id_code', authenticateToken, requireRole('admin'), [
   body('phone').optional().isLength({ min: 10, max: 20 }),
   body('plan_id').optional().isInt(),
   body('team_user').optional({ nullable: true }).isInt(),
-  body('avatar_url').optional({ nullable: true }).isURL().withMessage('URL do avatar inválida.'),
+  body('avatar_url').optional({ nullable: true }).isURL({ require_tld: false }).withMessage('URL do avatar inválida.'),
   body('birth_date').optional({ nullable: true }).isISO8601().toDate().withMessage('Data de nascimento inválida.'),
   body('address_street').optional({ nullable: true }).isString().trim(),
   body('address_number').optional({ nullable: true }).isString().trim(),
