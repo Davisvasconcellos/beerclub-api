@@ -13,6 +13,10 @@ const OrderItem = require('./OrderItem');
 const PixPayment = require('./PixPayment');
 const Message = require('./Message');
 const StoreSchedule = require('./StoreSchedule');
+const Event = require('./Event');
+const EventQuestion = require('./EventQuestion');
+const EventResponse = require('./EventResponse');
+const EventAnswer = require('./EventAnswer');
 
 // Define associations
 
@@ -82,6 +86,22 @@ PixPayment.belongsTo(Order, { foreignKey: 'order_id', as: 'order' });
 User.belongsTo(FootballTeam, { foreignKey: 'team_user', as: 'team' });
 FootballTeam.hasMany(User, { foreignKey: 'team_user', as: 'users' });
 
+// Event associations
+Event.belongsTo(User, { foreignKey: 'created_by', as: 'creator' });
+User.hasMany(Event, { foreignKey: 'created_by', as: 'createdEvents' });
+
+Event.hasMany(EventQuestion, { foreignKey: 'event_id', as: 'questions' });
+EventQuestion.belongsTo(Event, { foreignKey: 'event_id', as: 'event' });
+
+Event.hasMany(EventResponse, { foreignKey: 'event_id', as: 'responses' });
+EventResponse.belongsTo(Event, { foreignKey: 'event_id', as: 'event' });
+
+EventResponse.hasMany(EventAnswer, { foreignKey: 'response_id', as: 'answers' });
+EventAnswer.belongsTo(EventResponse, { foreignKey: 'response_id', as: 'response' });
+
+EventQuestion.hasMany(EventAnswer, { foreignKey: 'question_id', as: 'answers' });
+EventAnswer.belongsTo(EventQuestion, { foreignKey: 'question_id', as: 'question' });
+
 module.exports = {
   sequelize,
   Plan,
@@ -96,4 +116,8 @@ module.exports = {
   FootballTeam,
   TokenBlocklist,
   StoreSchedule
-}; 
+  ,Event
+  ,EventQuestion
+  ,EventResponse
+  ,EventAnswer
+};

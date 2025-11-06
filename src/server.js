@@ -18,6 +18,8 @@ const productRoutes = require('./routes/products');
 const orderRoutes = require('./routes/orders');
 const storeRoutes = require('./routes/stores');
 const footballTeamsRoutes = require('./routes/footballTeams');
+const eventRoutes = require('./routes/events');
+const eventOpenRoutes = require('./routes/eventsOpen');
 
 // Import middleware
 const errorHandler = require('./middlewares/errorHandler');
@@ -123,6 +125,8 @@ app.use('/api/v1/products', productRoutes);
 app.use('/api/v1/orders', orderRoutes);
 app.use('/api/v1/stores', storeRoutes);
 app.use('/api/v1/football-teams', footballTeamsRoutes);
+app.use('/api/v1/events', eventRoutes);
+app.use('/api/events', eventOpenRoutes);
 
 // Swagger documentation (only in development)
 if (process.env.NODE_ENV === 'development') {
@@ -162,4 +166,4 @@ const server = app.listen(PORT, async () => {
   }
 });
 
-module.exports = app; 
+module.exports = app;
