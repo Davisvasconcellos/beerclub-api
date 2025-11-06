@@ -1,8 +1,24 @@
 const express = require('express');
 const jwt = require('jsonwebtoken');
 const { body, validationResult } = require('express-validator');
+const { Op } = require('sequelize');
 const { User, Plan, TokenBlocklist, FootballTeam } = require('../models');
 const { authenticateToken } = require('../middlewares/auth');
+const admin = require('firebase-admin');
+
+// Firebase Admin initialization (supports Application Default or JSON from env)
+if (!admin.apps.length) {
+  try {
+    if (process.env.FIREBASE_SERVICE_ACCOUNT_JSON) {
+      const serviceAccount = JSON.parse(process.env.FIREBASE_SERVICE_ACCOUNT_JSON);
+      admin.initializeApp({ credential: admin.credential.cert(serviceAccount) });
+    } else {
+      admin.initializeApp({ credential: admin.credential.applicationDefault() });
+    }
+  } catch (err) {
+    console.error('Firebase Admin initialization error:', err);
+  }
+}
 
 const router = express.Router();
 
@@ -111,6 +127,121 @@ router.post('/login', [
   } catch (error) {
     console.error('Login error:', error);
     res.status(500).json({
+      error: 'Internal server error',
+      message: 'Erro interno do servidor'
+    });
+  }
+});
+
+/**
+ * Google OAuth Login
+ * POST /api/v1/auth/google
+ * body: { idToken }
+ */
+router.post('/google', [
+  body('idToken').isString().withMessage('idToken é obrigatório')
+], async (req, res) => {
+  try {
+    const errors = validationResult(req);
+    if (!errors.isEmpty()) {
+      return res.status(400).json({
+        error: 'Validation error',
+        message: 'Dados inválidos',
+        details: errors.array()
+      });
+    }
+
+    const { idToken } = req.body;
+
+    let decoded;
+    try {
+      decoded = await admin.auth().verifyIdToken(idToken);
+    } catch (err) {
+      return res.status(401).json({
+        error: 'Invalid token',
+        message: 'Token do Google inválido ou expirado'
+      });
+    }
+
+    const { email, name, picture, sub, email_verified } = decoded;
+
+    if (!email) {
+      return res.status(400).json({
+        error: 'Email required',
+        message: 'Email não disponível no token do Google'
+      });
+    }
+
+    const include = [
+      {
+        model: Plan,
+        as: 'plan',
+        attributes: ['id', 'name', 'description', 'price']
+      },
+      {
+        model: FootballTeam,
+        as: 'team',
+        attributes: ['name', 'short_name', 'abbreviation', 'shield']
+      }
+    ];
+
+    // Procura por google_uid (preferencial) ou legado google_id
+    let user = await User.findOne({ where: { [Op.or]: [{ google_uid: sub }, { google_id: sub }] }, include });
+
+    if (!user) {
+      const userByEmail = await User.findOne({ where: { email } });
+
+      if (userByEmail) {
+        await userByEmail.update({
+          google_uid: sub,
+          google_id: userByEmail.google_id || sub, // mantém compatibilidade com coluna antiga
+          email_verified: !!email_verified,
+          name: userByEmail.name || name || email,
+          avatar_url: userByEmail.avatar_url || picture || null
+        });
+
+        user = await User.findOne({ where: { id: userByEmail.id }, include });
+      } else {
+        const randomPassword = Math.random().toString(36).slice(2) + Math.random().toString(36).slice(2);
+        const created = await User.create({
+          name: name || (email ? email.split('@')[0] : 'Usuário Google'),
+          email,
+          password: randomPassword,
+          role: 'customer',
+          google_uid: sub,
+          google_id: sub, // legado
+          avatar_url: picture || null,
+          email_verified: !!email_verified
+        });
+
+        user = await User.findOne({ where: { id: created.id }, include });
+      }
+    }
+
+    const token = jwt.sign(
+      {
+        userId: user.id,
+        email: user.email,
+        role: user.role,
+        planId: user.plan_id
+      },
+      process.env.JWT_SECRET,
+      { expiresIn: process.env.JWT_EXPIRES_IN || '24h' }
+    );
+
+    return res.json({
+      success: true,
+      message: 'Login com Google realizado com sucesso',
+      data: {
+        user: user.toJSON(),
+        token,
+        expiresIn: process.env.JWT_EXPIRES_IN || '24h'
+      }
+    });
+
+  } catch (error) {
+    console.error('Google auth error:', error);
+    return res.status(500).json({
       error: 'Internal server error',
       message: 'Erro interno do servidor'
     });
@@ -362,4 +493,4 @@ router.post('/logout', authenticateToken, async (req, res) => {
   }
 });
 
-module.exports = router; 
+module.exports = router;

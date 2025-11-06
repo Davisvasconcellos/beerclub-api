@@ -53,6 +53,11 @@ const User = sequelize.define('User', {
     allowNull: true,
     unique: true
   },
+  google_uid: {
+    type: DataTypes.STRING,
+    allowNull: true,
+    unique: true
+  },
   avatar_url: {
     type: DataTypes.STRING,
     allowNull: true,
