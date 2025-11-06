@@ -38,6 +38,7 @@
     "mysql2": "^3.6.5",
     "sequelize": "^6.37.1",
     "sequelize-cli": "^6.6.2",
+    "uuid": "^9.0.1",
     "swagger-jsdoc": "^3.7.0",
     "swagger-ui-express": "^5.0.0"
   },

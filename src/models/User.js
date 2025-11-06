@@ -1,6 +1,7 @@
 const { DataTypes } = require('sequelize');
 const { sequelize } = require('../config/database');
 const bcrypt = require('bcryptjs');
+const { v4: uuidv4 } = require('uuid');
 
 const User = sequelize.define('User', {
   id: {
@@ -138,16 +139,15 @@ const User = sequelize.define('User', {
       if (user.password_hash) {
         user.password_hash = await bcrypt.hash(user.password_hash, 12);
       }
+      // Garantir id_code no padrão UUID v4 antes de inserir
+      user.id_code = uuidv4();
     },
     beforeUpdate: async (user) => {
       if (user.changed('password_hash')) {
         user.password_hash = await bcrypt.hash(user.password_hash, 12);
       }
     },
-    afterCreate: async (user) => {
-      const id_code = `${Date.now()}${user.id}`;
-      await user.update({ id_code });
-    }
+    // Removido afterCreate para evitar update adicional e padronizar com Store (UUID v4)
   }
 });
 
