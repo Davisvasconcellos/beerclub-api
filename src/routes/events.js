@@ -21,13 +21,34 @@ const router = express.Router();
  *         application/json:
  *           schema:
  *             type: object
- *             required: [name, slug]
+ *             required: [name, slug, description, start_datetime, end_datetime, place]
  *             properties:
  *               name:
  *                 type: string
  *               slug:
  *                 type: string
  *               banner_url:
+ *                 type: string
+ *               description:
+ *                 type: string
+ *               public_url:
+ *                 type: string
+ *               gallery_url:
+ *                 type: string
+ *               place:
+ *                 type: string
+ *               resp_email:
+ *                 type: string
+ *                 format: email
+ *               resp_name:
+ *                 type: string
+ *               resp_phone:
+ *                 type: string
+ *               color_1:
+ *                 type: string
+ *               color_2:
+ *                 type: string
+ *               card_background:
  *                 type: string
  *               start_datetime:
  *                 type: string
@@ -61,9 +82,19 @@ const router = express.Router();
 router.post('/', authenticateToken, requireRole('admin', 'master'), [
   body('name').isLength({ min: 2 }).withMessage('Nome é obrigatório.'),
   body('slug').isLength({ min: 2 }).withMessage('Slug é obrigatório.'),
-  body('banner_url').optional().isURL().withMessage('banner_url inválida'),
-  body('start_datetime').optional().isISO8601().toDate(),
-  body('end_datetime').optional().isISO8601().toDate(),
+  body('banner_url').optional().isURL({ require_tld: false }).withMessage('banner_url inválida'),
+  body('description').isLength({ min: 1 }).withMessage('Descrição é obrigatória.'),
+  body('public_url').optional().isURL({ require_tld: false }).withMessage('public_url inválida'),
+  body('gallery_url').optional().isURL({ require_tld: false }).withMessage('gallery_url inválida'),
+  body('place').isLength({ min: 2 }).withMessage('Local é obrigatório.'),
+  body('resp_email').optional().isEmail().withMessage('resp_email inválido'),
+  body('resp_name').optional().isString(),
+  body('resp_phone').optional().isString(),
+  body('color_1').optional().isString(),
+  body('color_2').optional().isString(),
+  body('card_background').optional().isString(),
+  body('start_datetime').isISO8601().toDate().withMessage('start_datetime é obrigatório e deve ser uma data válida.'),
+  body('end_datetime').isISO8601().toDate().withMessage('end_datetime é obrigatório e deve ser uma data válida.'),
   body('questions').optional().isArray()
 ], async (req, res) => {
   const errors = validationResult(req);
@@ -71,7 +102,24 @@ router.post('/', authenticateToken, requireRole('admin', 'master'), [
     return res.status(400).json({ error: 'Validation error', details: errors.array() });
   }
 
-  const { name, slug, banner_url, start_datetime, end_datetime, questions = [] } = req.body;
+  const {
+    name,
+    slug,
+    banner_url,
+    start_datetime,
+    end_datetime,
+    description,
+    public_url,
+    gallery_url,
+    place,
+    resp_email,
+    resp_name,
+    resp_phone,
+    color_1,
+    color_2,
+    card_background,
+    questions = []
+  } = req.body;
   const creatorId = req.user.userId;
 
   try {
@@ -89,6 +137,16 @@ router.post('/', authenticateToken, requireRole('admin', 'master'), [
         banner_url,
         start_datetime,
         end_datetime,
+        description,
+        public_url,
+        gallery_url,
+        place,
+        resp_email,
+        resp_name,
+        resp_phone,
+        color_1,
+        color_2,
+        card_background,
         created_by: creatorId
       }, { transaction: t });
 
@@ -122,6 +180,8 @@ router.post('/', authenticateToken, requireRole('admin', 'master'), [
     return res.status(500).json({ error: 'Internal server error', message: 'Erro interno do servidor' });
   }
 });
+
+ 
 
 /**
  * @swagger
@@ -239,7 +299,7 @@ router.get('/', authenticateToken, requireRole('admin', 'master'), async (req, r
     const rows = await Event.findAll({
       where,
       attributes: [
-        'id', 'id_code', 'name', 'slug', 'banner_url', 'start_datetime', 'end_datetime', 'created_at',
+        'id_code', 'name', 'slug', 'description', 'banner_url', 'start_datetime', 'end_datetime', 'created_at',
         [sequelize.literal('(SELECT COUNT(*) FROM event_questions AS eq WHERE eq.event_id = Event.id)'), 'questions_count']
       ],
       order: [[sortBy, order]],
@@ -358,7 +418,17 @@ router.get('/:id', authenticateToken, requireRole('admin', 'master'), async (req
 router.patch('/:id', authenticateToken, requireRole('admin', 'master'), [
   body('name').optional().isLength({ min: 2 }),
   body('slug').optional().isLength({ min: 2 }),
-  body('banner_url').optional().isURL()
+  body('banner_url').optional().isURL({ require_tld: false }).withMessage('banner_url inválida'),
+  body('description').optional().isString(),
+  body('public_url').optional().isURL({ require_tld: false }).withMessage('public_url inválida'),
+  body('gallery_url').optional().isURL({ require_tld: false }).withMessage('gallery_url inválida'),
+  body('place').optional().isString(),
+  body('resp_email').optional().isEmail().withMessage('resp_email inválido'),
+  body('resp_name').optional().isString(),
+  body('resp_phone').optional().isString(),
+  body('color_1').optional().isString(),
+  body('color_2').optional().isString(),
+  body('card_background').optional().isString()
 ], async (req, res) => {
   const errors = validationResult(req);
   if (!errors.isEmpty()) {
@@ -376,7 +446,7 @@ router.patch('/:id', authenticateToken, requireRole('admin', 'master'), [
       return res.status(403).json({ error: 'Access denied', message: 'Acesso negado' });
     }
 
-    const allowed = ['name', 'slug', 'banner_url'];
+    const allowed = ['name', 'slug', 'banner_url', 'description', 'public_url', 'gallery_url', 'place', 'resp_email', 'resp_name', 'resp_phone', 'color_1', 'color_2', 'card_background'];
     const updateData = {};
     for (const key of allowed) {
       if (req.body[key] !== undefined) updateData[key] = req.body[key];
