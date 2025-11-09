@@ -3,7 +3,7 @@ const { body, validationResult } = require('express-validator');
 const { authenticateToken, requireRole } = require('../middlewares/auth');
 const { sequelize } = require('../config/database');
 const { Op, fn, col } = require('sequelize');
-const { Event, EventQuestion, EventResponse, EventAnswer, User } = require('../models');
+const { Event, EventQuestion, EventResponse, EventAnswer, User, EventGuest } = require('../models');
 
 const router = express.Router();
 
@@ -792,6 +792,461 @@ router.delete('/:id/questions/:questionId', authenticateToken, requireRole('admi
     return res.json({ success: true, message: 'Pergunta excluída com sucesso' });
   } catch (error) {
     console.error('Delete question error:', error);
+    return res.status(500).json({ error: 'Internal server error', message: 'Erro interno do servidor' });
+  }
+});
+
+/**
+ * @swagger
+ * /api/v1/events/{id}/checkin/lookup:
+ *   post:
+ *     summary: Buscar convidados por nome/email/documento (portaria)
+ *     tags: [Event Guests]
+ *     security:
+ *       - bearerAuth: []
+ *     parameters:
+ *       - in: path
+ *         name: id
+ *         required: true
+ *         schema:
+ *           type: string
+ *           format: uuid
+ *         description: id_code do evento (UUID)
+ *     requestBody:
+ *       required: true
+ *       content:
+ *         application/json:
+ *           schema:
+ *             type: object
+ *             properties:
+ *               query:
+ *                 type: string
+ *     responses:
+ *       200:
+ *         description: Possíveis matches para check-in
+ */
+router.post('/:id/checkin/lookup', authenticateToken, requireRole('admin', 'master'), async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { query } = req.body;
+    const event = await Event.findOne({ where: { id_code: id } });
+    if (!event) return res.status(404).json({ error: 'Not Found', message: 'Evento não encontrado' });
+    if (req.user.role !== 'master' && event.created_by !== req.user.userId) {
+      return res.status(403).json({ error: 'Access denied', message: 'Acesso negado' });
+    }
+
+    const where = { event_id: event.id };
+    if (query) {
+      where[Op.or] = [
+        { guest_name: { [Op.like]: `%${query}%` } },
+        { guest_email: { [Op.like]: `%${query}%` } },
+        { guest_document_number: { [Op.like]: `%${query}%` } }
+      ];
+    }
+    const guests = await EventGuest.findAll({ where, limit: 20 });
+    return res.json({ success: true, data: { guests } });
+  } catch (error) {
+    console.error('Lookup event guests error:', error);
+    return res.status(500).json({ error: 'Internal server error', message: 'Erro interno do servidor' });
+  }
+});
+
+/**
+ * @swagger
+ * /api/v1/events/{id}/checkin/confirm:
+ *   post:
+ *     summary: Confirmar check-in de convidado (portaria)
+ *     tags: [Event Guests]
+ *     security:
+ *       - bearerAuth: []
+ *     requestBody:
+ *       required: true
+ *       content:
+ *         application/json:
+ *           schema:
+ *             type: object
+ *             required: [guest_id]
+ *             properties:
+ *               guest_id:
+ *                 type: integer
+ *     responses:
+ *       200:
+ *         description: Check-in confirmado
+ */
+router.post('/:id/checkin/confirm', authenticateToken, requireRole('admin', 'master'), async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { guest_id } = req.body;
+    const event = await Event.findOne({ where: { id_code: id } });
+    if (!event) return res.status(404).json({ error: 'Not Found', message: 'Evento não encontrado' });
+    if (req.user.role !== 'master' && event.created_by !== req.user.userId) {
+      return res.status(403).json({ error: 'Access denied', message: 'Acesso negado' });
+    }
+
+    const guest = await EventGuest.findOne({ where: { id: guest_id, event_id: event.id } });
+    if (!guest) return res.status(404).json({ error: 'Not Found', message: 'Convidado não encontrado' });
+
+    await guest.update({ check_in_at: new Date(), check_in_method: 'staff_manual', authorized_by_user_id: req.user.userId });
+    return res.json({ success: true, data: { guest } });
+  } catch (error) {
+    console.error('Confirm check-in error:', error);
+    return res.status(500).json({ error: 'Internal server error', message: 'Erro interno do servidor' });
+  }
+});
+
+/**
+ * @swagger
+ * /api/v1/events/{id}/checkin/manual:
+ *   post:
+ *     summary: Cadastro rápido e check-in (portaria)
+ *     tags: [Event Guests]
+ *     security:
+ *       - bearerAuth: []
+ *     requestBody:
+ *       required: true
+ *       content:
+ *         application/json:
+ *           schema:
+ *             type: object
+ *             required: [guest_name]
+ *             properties:
+ *               guest_name: { type: string }
+ *               guest_phone: { type: string }
+ *               guest_document_type: { type: string, enum: [rg, cpf, passport] }
+ *               guest_document_number: { type: string }
+ *               type: { type: string, enum: [normal, vip, premium] }
+ *     responses:
+ *       201:
+ *         description: Convidado criado com check-in
+ */
+router.post('/:id/checkin/manual', authenticateToken, requireRole('admin', 'master'), async (req, res) => {
+  try {
+    const { id } = req.params;
+    const event = await Event.findOne({ where: { id_code: id } });
+    if (!event) return res.status(404).json({ error: 'Not Found', message: 'Evento não encontrado' });
+    if (req.user.role !== 'master' && event.created_by !== req.user.userId) {
+      return res.status(403).json({ error: 'Access denied', message: 'Acesso negado' });
+    }
+
+    const { guest_name, guest_phone, guest_document_type, guest_document_number, type } = req.body;
+    if (!guest_name) return res.status(400).json({ error: 'Validation error', message: 'guest_name é obrigatório' });
+
+    const payload = {
+      event_id: event.id,
+      user_id: null,
+      guest_name,
+      guest_email: null,
+      guest_phone: guest_phone || null,
+      guest_document_type: guest_document_type || null,
+      guest_document_number: guest_document_number || null,
+      type: ['normal', 'vip', 'premium'].includes(type) ? type : 'normal',
+      source: 'walk_in',
+      rsvp_confirmed: false,
+      rsvp_at: null,
+      invited_at: new Date(),
+      invited_by_user_id: req.user.userId,
+      check_in_at: new Date(),
+      check_in_method: 'staff_manual',
+      authorized_by_user_id: req.user.userId
+    };
+
+    const created = await EventGuest.create(payload);
+    return res.status(201).json({ success: true, data: { guest: created } });
+  } catch (error) {
+    console.error('Manual check-in error:', error);
+    if (error.name === 'SequelizeUniqueConstraintError') {
+      return res.status(409).json({ error: 'Duplicate entry', message: 'Convidado duplicado por email/documento/usuário' });
+    }
+    return res.status(500).json({ error: 'Internal server error', message: 'Erro interno do servidor' });
+  }
+});
+
+/**
+ * @swagger
+ * /api/v1/events/{id}/guests/{guestId}:
+ *   patch:
+ *     summary: Atualizar convidado do evento
+ *     tags: [Event Guests]
+ *     security:
+ *       - bearerAuth: []
+ *     parameters:
+ *       - in: path
+ *         name: id
+ *         required: true
+ *         schema:
+ *           type: string
+ *           format: uuid
+ *         description: id_code do evento (UUID)
+ *       - in: path
+ *         name: guestId
+ *         required: true
+ *         schema:
+ *           type: integer
+ *     requestBody:
+ *       required: true
+ *       content:
+ *         application/json:
+ *           schema:
+ *             type: object
+ *             properties:
+ *               guest_name: { type: string }
+ *               guest_email: { type: string }
+ *               guest_phone: { type: string }
+ *               guest_document_type: { type: string, enum: [rg, cpf, passport] }
+ *               guest_document_number: { type: string }
+ *               type: { type: string, enum: [normal, vip, premium] }
+ *               rsvp_confirmed: { type: boolean }
+ *               rsvp_at: { type: string, format: date-time }
+ *     responses:
+ *       200:
+ *         description: Convidado atualizado com sucesso
+ */
+router.patch('/:id/guests/:guestId', authenticateToken, requireRole('admin', 'master'), [
+  body('guest_email').optional().isEmail(),
+  body('guest_phone').optional().isString(),
+  body('guest_document_type').optional().isIn(['rg', 'cpf', 'passport']),
+  body('type').optional().isIn(['normal', 'vip', 'premium']),
+  body('rsvp_confirmed').optional().isBoolean(),
+  body('rsvp_at').optional().isISO8601().toDate()
+], async (req, res) => {
+  try {
+    const { id, guestId } = req.params;
+    const event = await Event.findOne({ where: { id_code: id } });
+    if (!event) return res.status(404).json({ error: 'Not Found', message: 'Evento não encontrado' });
+    if (req.user.role !== 'master' && event.created_by !== req.user.userId) {
+      return res.status(403).json({ error: 'Access denied', message: 'Acesso negado' });
+    }
+
+    const errors = validationResult(req);
+    if (!errors.isEmpty()) {
+      return res.status(400).json({ error: 'Validation error', details: errors.array() });
+    }
+
+    const guest = await EventGuest.findOne({ where: { id: guestId, event_id: event.id } });
+    if (!guest) return res.status(404).json({ error: 'Not Found', message: 'Convidado não encontrado' });
+
+    const update = {};
+    const fields = ['guest_name', 'guest_email', 'guest_phone', 'guest_document_type', 'guest_document_number', 'type', 'rsvp_confirmed'];
+    for (const f of fields) if (req.body[f] !== undefined) update[f] = req.body[f];
+    if (req.body.rsvp_at !== undefined) update.rsvp_at = req.body.rsvp_at ? new Date(req.body.rsvp_at) : null;
+
+    await guest.update(update);
+    return res.json({ success: true, data: { guest } });
+  } catch (error) {
+    console.error('Update event guest error:', error);
+    if (error.name === 'SequelizeUniqueConstraintError') {
+      return res.status(409).json({ error: 'Duplicate entry', message: 'Convidado duplicado por email/documento/usuário' });
+    }
+    return res.status(500).json({ error: 'Internal server error', message: 'Erro interno do servidor' });
+  }
+});
+
+/**
+ * @swagger
+ * /api/v1/events/{id}/guests:
+ *   get:
+ *     summary: Listar convidados do evento com filtros
+ *     tags: [Event Guests]
+ *     security:
+ *       - bearerAuth: []
+ *     parameters:
+ *       - in: path
+ *         name: id
+ *         required: true
+ *         schema:
+ *           type: string
+ *           format: uuid
+ *         description: id_code do evento (UUID)
+ *       - in: query
+ *         name: search
+ *         schema:
+ *           type: string
+ *       - in: query
+ *         name: type
+ *         schema:
+ *           type: string
+ *           enum: [normal, vip, premium]
+ *       - in: query
+ *         name: source
+ *         schema:
+ *           type: string
+ *           enum: [invited, walk_in]
+ *       - in: query
+ *         name: checked_in
+ *         schema:
+ *           type: boolean
+ *       - in: query
+ *         name: rsvp
+ *         schema:
+ *           type: boolean
+ *       - in: query
+ *         name: page
+ *         schema:
+ *           type: integer
+ *           default: 1
+ *       - in: query
+ *         name: page_size
+ *         schema:
+ *           type: integer
+ *           default: 20
+ *     responses:
+ *       200:
+ *         description: Lista unificada de convidados
+ */
+router.get('/:id/guests', authenticateToken, requireRole('admin', 'master'), async (req, res) => {
+  try {
+    const { id } = req.params;
+    const event = await Event.findOne({ where: { id_code: id } });
+    if (!event) return res.status(404).json({ error: 'Not Found', message: 'Evento não encontrado' });
+
+    if (req.user.role !== 'master' && event.created_by !== req.user.userId) {
+      return res.status(403).json({ error: 'Access denied', message: 'Acesso negado' });
+    }
+
+    const page = Math.max(parseInt(req.query.page || '1', 10), 1);
+    const pageSize = Math.min(Math.max(parseInt(req.query.page_size || '20', 10), 1), 100);
+    const offset = (page - 1) * pageSize;
+
+    const { search, type, source, checked_in, rsvp } = req.query;
+    const where = { event_id: event.id };
+    if (type && ['normal', 'vip', 'premium'].includes(type)) where.type = type;
+    if (source && ['invited', 'walk_in'].includes(source)) where.source = source;
+    if (checked_in !== undefined) {
+      if (String(checked_in).toLowerCase() === 'true') {
+        where.check_in_at = { [Op.ne]: null };
+      } else {
+        where.check_in_at = null;
+      }
+    }
+    if (rsvp !== undefined) {
+      where.rsvp_confirmed = String(rsvp).toLowerCase() === 'true';
+    }
+    if (search) {
+      where[Op.or] = [
+        { guest_name: { [Op.like]: `%${search}%` } },
+        { guest_email: { [Op.like]: `%${search}%` } },
+        { guest_document_number: { [Op.like]: `%${search}%` } }
+      ];
+    }
+
+    const total = await EventGuest.count({ where });
+    const guests = await EventGuest.findAll({
+      where,
+      include: [{ model: User, as: 'user', attributes: ['id', 'id_code', 'name', 'email', 'phone', 'avatar_url'] }],
+      order: [['created_at', 'DESC']],
+      offset,
+      limit: pageSize
+    });
+
+    const normalized = guests.map(g => {
+      const origin_status = g.source === 'invited'
+        ? 'pre_list'
+        : (g.check_in_method === 'google' ? 'open_login' : 'front_desk');
+      return {
+        id: g.id,
+        display_name: g.user?.name || g.guest_name,
+        avatar_url: g.user?.avatar_url || null,
+        email: g.user?.email || g.guest_email || null,
+        document: g.guest_document_number ? { type: g.guest_document_type, number: g.guest_document_number } : null,
+        phone: g.user?.phone || g.guest_phone || null,
+        type: g.type,
+        origin_status,
+        rsvp: g.source === 'invited' ? !!g.rsvp_confirmed : null,
+        rsvp_at: g.rsvp_at,
+        checkin: g.check_in_at,
+        check_in_method: g.check_in_method
+      };
+    });
+
+    return res.json({ success: true, data: { guests: normalized }, meta: { total, page, page_size: pageSize, pages: Math.ceil(total / pageSize) } });
+  } catch (error) {
+    console.error('List event guests error:', error);
+    return res.status(500).json({ error: 'Internal server error', message: 'Erro interno do servidor' });
+  }
+});
+
+/**
+ * @swagger
+ * /api/v1/events/{id}/guests:
+ *   post:
+ *     summary: Criar convidados (suporta bulk) para o evento
+ *     tags: [Event Guests]
+ *     security:
+ *       - bearerAuth: []
+ *     parameters:
+ *       - in: path
+ *         name: id
+ *         required: true
+ *         schema:
+ *           type: string
+ *           format: uuid
+ *         description: id_code do evento (UUID)
+ *     requestBody:
+ *       required: true
+ *       content:
+ *         application/json:
+ *           schema:
+ *             type: object
+ *             properties:
+ *               guests:
+ *                 type: array
+ *                 items:
+ *                   type: object
+ *                   required: [guest_name]
+ *                   properties:
+ *                     guest_name: { type: string }
+ *                     guest_email: { type: string }
+ *                     guest_phone: { type: string }
+ *                     guest_document_type: { type: string, enum: [rg, cpf, passport] }
+ *                     guest_document_number: { type: string }
+ *                     type: { type: string, enum: [normal, vip, premium] }
+ *                     source: { type: string, enum: [invited, walk_in] }
+ *                     rsvp_confirmed: { type: boolean }
+ *                     rsvp_at: { type: string, format: date-time }
+ *     responses:
+ *       201:
+ *         description: Convidados criados
+ */
+router.post('/:id/guests', authenticateToken, requireRole('admin', 'master'), [
+  body('guests').isArray({ min: 1 }).withMessage('guests deve ser uma lista com ao menos 1 item'),
+], async (req, res) => {
+  try {
+    const { id } = req.params;
+    const event = await Event.findOne({ where: { id_code: id } });
+    if (!event) return res.status(404).json({ error: 'Not Found', message: 'Evento não encontrado' });
+    if (req.user.role !== 'master' && event.created_by !== req.user.userId) {
+      return res.status(403).json({ error: 'Access denied', message: 'Acesso negado' });
+    }
+
+    const errors = validationResult(req);
+    if (!errors.isEmpty()) {
+      return res.status(400).json({ error: 'Validation error', details: errors.array() });
+    }
+
+    const { guests } = req.body;
+    const toCreate = guests.map(g => ({
+      event_id: event.id,
+      user_id: g.user_id || null,
+      guest_name: g.guest_name,
+      guest_email: g.guest_email || null,
+      guest_phone: g.guest_phone || null,
+      guest_document_type: g.guest_document_type || null,
+      guest_document_number: g.guest_document_number || null,
+      type: ['normal', 'vip', 'premium'].includes(g.type) ? g.type : 'normal',
+      source: ['invited', 'walk_in'].includes(g.source) ? g.source : 'invited',
+      rsvp_confirmed: !!g.rsvp_confirmed,
+      rsvp_at: g.rsvp_at ? new Date(g.rsvp_at) : null,
+      invited_at: new Date(),
+      invited_by_user_id: req.user.userId
+    }));
+
+    const created = await EventGuest.bulkCreate(toCreate, { validate: true, returning: true });
+    return res.status(201).json({ success: true, data: { guests: created } });
+  } catch (error) {
+    console.error('Create event guests error:', error);
+    if (error.name === 'SequelizeUniqueConstraintError') {
+      return res.status(409).json({ error: 'Duplicate entry', message: 'Convidado duplicado por email/documento/usuário' });
+    }
     return res.status(500).json({ error: 'Internal server error', message: 'Erro interno do servidor' });
   }
 });

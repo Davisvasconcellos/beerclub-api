@@ -2,7 +2,22 @@ const express = require('express');
 const { body, validationResult } = require('express-validator');
 const { Op } = require('sequelize');
 const { sequelize } = require('../config/database');
-const { Event, EventQuestion, EventResponse, EventAnswer } = require('../models');
+const { Event, EventQuestion, EventResponse, EventAnswer, User, EventGuest } = require('../models');
+const admin = require('firebase-admin');
+
+// Ensure Firebase Admin is initialized (reuse if already initialized in auth)
+if (!admin.apps.length) {
+  try {
+    if (process.env.FIREBASE_SERVICE_ACCOUNT_JSON) {
+      const serviceAccount = JSON.parse(process.env.FIREBASE_SERVICE_ACCOUNT_JSON);
+      admin.initializeApp({ credential: admin.credential.cert(serviceAccount) });
+    } else {
+      admin.initializeApp({ credential: admin.credential.applicationDefault() });
+    }
+  } catch (err) {
+    console.error('Firebase Admin initialization error (eventsOpen):', err);
+  }
+}
 
 const router = express.Router();
 
@@ -312,6 +327,133 @@ router.post('/:id/responses', [
     }
   } catch (error) {
     console.error('Create event response error:', error);
+    return res.status(500).json({ error: 'Internal server error', message: 'Erro interno do servidor' });
+  }
+});
+
+/**
+ * @swagger
+ * /api/events/{id}/checkin/google:
+ *   post:
+ *     summary: Check-in via login Google (evento aberto)
+ *     tags: [Events Public]
+ *     parameters:
+ *       - in: path
+ *         name: id
+ *         required: true
+ *         schema:
+ *           type: string
+ *           format: uuid
+ *         description: id_code do evento (UUID)
+ *     requestBody:
+ *       required: true
+ *       content:
+ *         application/json:
+ *           schema:
+ *             type: object
+ *             required: [idToken]
+ *             properties:
+ *               idToken:
+ *                 type: string
+ *     responses:
+ *       200:
+ *         description: Check-in realizado
+ *       404:
+ *         description: Evento não encontrado
+ *       409:
+ *         description: Convidado já checkado
+ */
+router.post('/:id/checkin/google', [
+  body('idToken').isString().withMessage('idToken é obrigatório')
+], async (req, res) => {
+  try {
+    const errors = validationResult(req);
+    if (!errors.isEmpty()) {
+      return res.status(400).json({ error: 'Validation error', message: 'Dados inválidos', details: errors.array() });
+    }
+
+    const { id } = req.params;
+    const event = await Event.findOne({ where: { id_code: id } });
+    if (!event) {
+      return res.status(404).json({ error: 'Not Found', message: 'Evento não encontrado' });
+    }
+
+    const { idToken } = req.body;
+    let decoded;
+    try {
+      decoded = await admin.auth().verifyIdToken(idToken);
+    } catch (err) {
+      return res.status(401).json({ error: 'Invalid token', message: 'Token do Google inválido ou expirado' });
+    }
+
+    const { email, name, picture, sub, email_verified } = decoded;
+    if (!email) {
+      return res.status(400).json({ error: 'Email required', message: 'Email não disponível no token do Google' });
+    }
+
+    // Localiza ou cria usuário com base no Google UID ou email
+    let user = await User.findOne({ where: { [Op.or]: [{ google_uid: sub }, { google_id: sub }, { email }] } });
+    if (!user) {
+      const randomPassword = Math.random().toString(36).slice(2) + Math.random().toString(36).slice(2);
+      user = await User.create({
+        name: name || (email ? email.split('@')[0] : 'Usuário Google'),
+        email,
+        password: randomPassword,
+        role: 'customer',
+        google_uid: sub,
+        google_id: sub,
+        avatar_url: picture || null,
+        email_verified: !!email_verified
+      });
+    } else {
+      // Atualiza dados úteis se necessário
+      await user.update({
+        google_uid: user.google_uid || sub,
+        google_id: user.google_id || sub,
+        name: user.name || name || email,
+        avatar_url: user.avatar_url || picture || null,
+        email_verified: user.email_verified || !!email_verified
+      });
+    }
+
+    // Verifica se já existe convidado vinculado ao usuário
+    let guest = await EventGuest.findOne({ where: { event_id: event.id, user_id: user.id } });
+    if (guest) {
+      if (guest.check_in_at) {
+        return res.status(409).json({ error: 'Already checked in', message: 'Convidado já realizou check-in' });
+      }
+      await guest.update({
+        guest_name: guest.guest_name || user.name,
+        guest_email: guest.guest_email || user.email,
+        check_in_at: new Date(),
+        check_in_method: 'google_login',
+        source: 'walk_in',
+        authorized_by_user_id: null
+      });
+    } else {
+      guest = await EventGuest.create({
+        event_id: event.id,
+        user_id: user.id,
+        guest_name: user.name,
+        guest_email: user.email,
+        guest_phone: user.phone || null,
+        guest_document_type: null,
+        guest_document_number: null,
+        type: 'normal',
+        source: 'walk_in',
+        rsvp_confirmed: false,
+        rsvp_at: null,
+        invited_at: new Date(),
+        invited_by_user_id: null,
+        check_in_at: new Date(),
+        check_in_method: 'google_login',
+        authorized_by_user_id: null
+      });
+    }
+
+    return res.json({ success: true, data: { guest } });
+  } catch (error) {
+    console.error('Public Google check-in error:', error);
     return res.status(500).json({ error: 'Internal server error', message: 'Erro interno do servidor' });
   }
 });

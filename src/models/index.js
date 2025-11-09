@@ -17,6 +17,7 @@ const Event = require('./Event');
 const EventQuestion = require('./EventQuestion');
 const EventResponse = require('./EventResponse');
 const EventAnswer = require('./EventAnswer');
+const EventGuest = require('./EventGuest');
 
 // Define associations
 
@@ -102,6 +103,12 @@ EventAnswer.belongsTo(EventResponse, { foreignKey: 'response_id', as: 'response'
 EventQuestion.hasMany(EventAnswer, { foreignKey: 'question_id', as: 'answers' });
 EventAnswer.belongsTo(EventQuestion, { foreignKey: 'question_id', as: 'question' });
 
+// EventGuest associations
+Event.hasMany(EventGuest, { foreignKey: 'event_id', as: 'guests' });
+EventGuest.belongsTo(Event, { foreignKey: 'event_id', as: 'event' });
+User.hasMany(EventGuest, { foreignKey: 'user_id', as: 'eventGuests' });
+EventGuest.belongsTo(User, { foreignKey: 'user_id', as: 'user' });
+
 module.exports = {
   sequelize,
   Plan,
@@ -120,4 +127,5 @@ module.exports = {
   ,EventQuestion
   ,EventResponse
   ,EventAnswer
+  ,EventGuest
 };
