@@ -129,6 +129,11 @@ router.post('/', authenticateToken, requireRole('admin', 'master'), [
       return res.status(409).json({ error: 'Duplicate entry', message: 'Slug já existe' });
     }
 
+    // Validação de ordem das datas: end_datetime não pode ser anterior a start_datetime
+    if (start_datetime && end_datetime && end_datetime < start_datetime) {
+      return res.status(400).json({ error: 'Validation error', message: 'end_datetime não pode ser anterior a start_datetime' });
+    }
+
     const t = await sequelize.transaction();
     try {
       const event = await Event.create({
@@ -428,7 +433,9 @@ router.patch('/:id', authenticateToken, requireRole('admin', 'master'), [
   body('resp_phone').optional().isString(),
   body('color_1').optional().isString(),
   body('color_2').optional().isString(),
-  body('card_background').optional().isString()
+  body('card_background').optional().isString(),
+  body('start_datetime').optional().isISO8601().toDate().withMessage('start_datetime deve ser uma data válida'),
+  body('end_datetime').optional().isISO8601().toDate().withMessage('end_datetime deve ser uma data válida')
 ], async (req, res) => {
   const errors = validationResult(req);
   if (!errors.isEmpty()) {
@@ -446,7 +453,7 @@ router.patch('/:id', authenticateToken, requireRole('admin', 'master'), [
       return res.status(403).json({ error: 'Access denied', message: 'Acesso negado' });
     }
 
-    const allowed = ['name', 'slug', 'banner_url', 'description', 'public_url', 'gallery_url', 'place', 'resp_email', 'resp_name', 'resp_phone', 'color_1', 'color_2', 'card_background'];
+    const allowed = ['name', 'slug', 'banner_url', 'description', 'public_url', 'gallery_url', 'place', 'resp_email', 'resp_name', 'resp_phone', 'color_1', 'color_2', 'card_background', 'start_datetime', 'end_datetime'];
     const updateData = {};
     for (const key of allowed) {
       if (req.body[key] !== undefined) updateData[key] = req.body[key];
@@ -457,6 +464,13 @@ router.patch('/:id', authenticateToken, requireRole('admin', 'master'), [
       if (exists) {
         return res.status(409).json({ error: 'Duplicate entry', message: 'Slug já existe' });
       }
+    }
+
+    // Validação de ordem das datas no PATCH: calcula valores finais e compara
+    const newStart = updateData.start_datetime !== undefined ? updateData.start_datetime : event.start_datetime;
+    const newEnd = updateData.end_datetime !== undefined ? updateData.end_datetime : event.end_datetime;
+    if (newStart && newEnd && newEnd < newStart) {
+      return res.status(400).json({ error: 'Validation error', message: 'end_datetime não pode ser anterior a start_datetime' });
     }
 
     await event.update(updateData);
@@ -996,7 +1010,8 @@ router.post('/:id/checkin/manual', authenticateToken, requireRole('admin', 'mast
  *               guest_document_number: { type: string }
  *               type: { type: string, enum: [normal, vip, premium] }
  *               rsvp_confirmed: { type: boolean }
- *               rsvp_at: { type: string, format: date-time }
+ *               rsvp_at: { type: string, format: date-time, nullable: true }
+ *               check_in_at: { type: string, format: date-time, nullable: true }
  *     responses:
  *       200:
  *         description: Convidado atualizado com sucesso
@@ -1007,7 +1022,10 @@ router.patch('/:id/guests/:guestId', authenticateToken, requireRole('admin', 'ma
   body('guest_document_type').optional().isIn(['rg', 'cpf', 'passport']),
   body('type').optional().isIn(['normal', 'vip', 'premium']),
   body('rsvp_confirmed').optional().isBoolean(),
-  body('rsvp_at').optional().isISO8601().toDate()
+  body('rsvp_at').optional({ nullable: true }).isISO8601().toDate(),
+  body('check_in_at').optional({ nullable: true }).isISO8601().toDate(),
+  body('check_in_method').optional().isIn(['google', 'staff_manual', 'invited_qr']),
+  body('authorized_by_user_id').optional().isInt()
 ], async (req, res) => {
   try {
     const { id, guestId } = req.params;
@@ -1028,7 +1046,38 @@ router.patch('/:id/guests/:guestId', authenticateToken, requireRole('admin', 'ma
     const update = {};
     const fields = ['guest_name', 'guest_email', 'guest_phone', 'guest_document_type', 'guest_document_number', 'type', 'rsvp_confirmed'];
     for (const f of fields) if (req.body[f] !== undefined) update[f] = req.body[f];
-    if (req.body.rsvp_at !== undefined) update.rsvp_at = req.body.rsvp_at ? new Date(req.body.rsvp_at) : null;
+    if (req.body.rsvp_at !== undefined) {
+      update.rsvp_at = req.body.rsvp_at ? new Date(req.body.rsvp_at) : null;
+      // Se rsvp_confirmed não foi explicitamente enviado, sincroniza com rsvp_at
+      if (update.rsvp_confirmed === undefined) {
+        update.rsvp_confirmed = !!update.rsvp_at;
+      }
+    }
+
+    // Permitir remoção/ajuste de check-in
+    if (req.body.check_in_at !== undefined) {
+      update.check_in_at = req.body.check_in_at ? new Date(req.body.check_in_at) : null;
+      if (update.check_in_at === null) {
+        update.check_in_method = null;
+        update.authorized_by_user_id = null;
+      } else {
+        // Se está marcando check-in e método/autorizador não foram enviados,
+        // definir defaults com base no usuário logado
+        if (req.body.check_in_method === undefined && update.check_in_method === undefined) {
+          update.check_in_method = 'staff_manual';
+        }
+        if (req.body.authorized_by_user_id === undefined && update.authorized_by_user_id === undefined) {
+          update.authorized_by_user_id = req.user.userId;
+        }
+      }
+    }
+
+    if (req.body.check_in_method !== undefined) {
+      update.check_in_method = req.body.check_in_method;
+    }
+    if (req.body.authorized_by_user_id !== undefined) {
+      update.authorized_by_user_id = req.body.authorized_by_user_id;
+    }
 
     await guest.update(update);
     return res.json({ success: true, data: { guest } });
@@ -1076,6 +1125,11 @@ router.patch('/:id/guests/:guestId', authenticateToken, requireRole('admin', 'ma
  *         schema:
  *           type: boolean
  *       - in: query
+ *         name: checkin
+ *         schema:
+ *           type: boolean
+ *         description: Alias de checked_in
+ *       - in: query
  *         name: rsvp
  *         schema:
  *           type: boolean
@@ -1107,12 +1161,13 @@ router.get('/:id/guests', authenticateToken, requireRole('admin', 'master'), asy
     const pageSize = Math.min(Math.max(parseInt(req.query.page_size || '20', 10), 1), 100);
     const offset = (page - 1) * pageSize;
 
-    const { search, type, source, checked_in, rsvp } = req.query;
+    const { search, type, source, checked_in, checkin, rsvp } = req.query;
     const where = { event_id: event.id };
     if (type && ['normal', 'vip', 'premium'].includes(type)) where.type = type;
     if (source && ['invited', 'walk_in'].includes(source)) where.source = source;
-    if (checked_in !== undefined) {
-      if (String(checked_in).toLowerCase() === 'true') {
+    const checkedParam = checked_in !== undefined ? checked_in : checkin;
+    if (checkedParam !== undefined) {
+      if (String(checkedParam).toLowerCase() === 'true') {
         where.check_in_at = { [Op.ne]: null };
       } else {
         where.check_in_at = null;
@@ -1151,9 +1206,10 @@ router.get('/:id/guests', authenticateToken, requireRole('admin', 'master'), asy
         phone: g.user?.phone || g.guest_phone || null,
         type: g.type,
         origin_status,
-        rsvp: g.source === 'invited' ? !!g.rsvp_confirmed : null,
+        rsvp: !!g.rsvp_at,
         rsvp_at: g.rsvp_at,
-        checkin: g.check_in_at,
+        check_in_at: g.check_in_at,
+        checked_in: !!g.check_in_at,
         check_in_method: g.check_in_method
       };
     });
@@ -1201,8 +1257,13 @@ router.get('/:id/guests', authenticateToken, requireRole('admin', 'master'), asy
  *                     guest_document_number: { type: string }
  *                     type: { type: string, enum: [normal, vip, premium] }
  *                     source: { type: string, enum: [invited, walk_in] }
- *                     rsvp_confirmed: { type: boolean }
- *                     rsvp_at: { type: string, format: date-time }
+ *                     rsvp_confirmed:
+ *                       type: boolean
+ *                       description: Se omitido, será definido como !!rsvp_at
+ *                     rsvp_at:
+ *                       type: string
+ *                       format: date-time
+ *                 description: "Se rsvp_confirmed não for enviado, será sincronizado como !!rsvp_at"
  *     responses:
  *       201:
  *         description: Convidados criados
@@ -1234,7 +1295,7 @@ router.post('/:id/guests', authenticateToken, requireRole('admin', 'master'), [
       guest_document_number: g.guest_document_number || null,
       type: ['normal', 'vip', 'premium'].includes(g.type) ? g.type : 'normal',
       source: ['invited', 'walk_in'].includes(g.source) ? g.source : 'invited',
-      rsvp_confirmed: !!g.rsvp_confirmed,
+      rsvp_confirmed: g.rsvp_confirmed !== undefined ? !!g.rsvp_confirmed : !!g.rsvp_at,
       rsvp_at: g.rsvp_at ? new Date(g.rsvp_at) : null,
       invited_at: new Date(),
       invited_by_user_id: req.user.userId

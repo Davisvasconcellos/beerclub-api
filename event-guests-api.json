@@ -82,6 +82,7 @@
           { "in": "query", "name": "type", "schema": { "type": "string", "enum": ["normal", "vip", "premium"] } },
           { "in": "query", "name": "source", "schema": { "type": "string", "enum": ["invited", "walk_in"] } },
           { "in": "query", "name": "checked_in", "schema": { "type": "boolean" } },
+          { "in": "query", "name": "checkin", "schema": { "type": "boolean" }, "description": "Alias de checked_in" },
           { "in": "query", "name": "rsvp", "schema": { "type": "boolean" } },
           { "in": "query", "name": "page", "schema": { "type": "integer", "default": 1 } },
           { "in": "query", "name": "page_size", "schema": { "type": "integer", "default": 20 } }
@@ -109,7 +110,8 @@
                             "origin_status": "pre_list",
                             "rsvp": true,
                             "rsvp_at": "2025-11-08T15:00:00.000Z",
-                            "checkin": null,
+                            "check_in_at": null,
+                            "checked_in": false,
                             "check_in_method": null
                           }
                         ]
@@ -234,7 +236,10 @@
                   "guest_document_number": { "type": "string" },
                   "type": { "type": "string", "enum": ["normal", "vip", "premium"] },
                   "rsvp_confirmed": { "type": "boolean" },
-                  "rsvp_at": { "type": "string", "format": "date-time" }
+                  "rsvp_at": { "type": "string", "format": "date-time", "nullable": true },
+                  "check_in_at": { "type": "string", "format": "date-time", "nullable": true, "description": "Se enviado com data e sem check_in_method/authorized_by_user_id, serão definidos por padrão: check_in_method='staff_manual' e authorized_by_user_id=usuário do token. Se enviado como null, check-in será removido e campos relacionados zerados." },
+                  "check_in_method": { "type": "string", "enum": ["google", "staff_manual", "invited_qr"], "description": "Opcional no PATCH; se omitido quando check_in_at é enviado, assume 'staff_manual'" },
+                  "authorized_by_user_id": { "type": "integer", "description": "Opcional no PATCH; se omitido quando check_in_at é enviado, assume o usuário do token" }
                 }
               },
               "examples": {
@@ -244,6 +249,33 @@
                     "guest_phone": "+55 21 98888-7777",
                     "rsvp_confirmed": true,
                     "rsvp_at": "2025-11-08T18:30:00.000Z"
+                  }
+                },
+                "Remover RSVP": {
+                  "summary": "Reset de confirmação de presença",
+                  "value": {
+                    "rsvp_at": null,
+                    "rsvp_confirmed": false
+                  }
+                },
+                "Remover check-in": {
+                  "summary": "Reset de check-in",
+                  "value": {
+                    "check_in_at": null
+                  }
+                },
+                "Check-in manual (defaults)": {
+                  "summary": "Definir check-in sem enviar metadados (usa defaults)",
+                  "value": {
+                    "check_in_at": "2025-11-10T21:45:00.000Z"
+                  }
+                },
+                "Check-in manual": {
+                  "summary": "Definir check-in com metadados",
+                  "value": {
+                    "check_in_at": "2025-11-10T21:45:00.000Z",
+                    "check_in_method": "staff_manual",
+                    "authorized_by_user_id": 100
                   }
                 }
               }
