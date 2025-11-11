@@ -59,6 +59,10 @@ function formatDuplicateError(error) {
  *                 type: string
  *               banner_url:
  *                 type: string
+ *               card_background_type:
+ *                 type: integer
+ *                 enum: [0, 1]
+ *                 description: "Preferência de fundo do cartão: 0=cores (degradê), 1=imagem"
  *               description:
  *                 type: string
  *               public_url:
@@ -123,6 +127,7 @@ router.post('/', authenticateToken, requireRole('admin', 'master'), [
   body('color_1').optional().isString(),
   body('color_2').optional().isString(),
   body('card_background').optional().isString(),
+  body('card_background_type').optional().isInt({ min: 0, max: 1 }),
   body('start_datetime').isISO8601().toDate().withMessage('start_datetime é obrigatório e deve ser uma data válida.'),
   body('end_datetime').isISO8601().toDate().withMessage('end_datetime é obrigatório e deve ser uma data válida.'),
   body('questions').optional().isArray()
@@ -148,6 +153,7 @@ router.post('/', authenticateToken, requireRole('admin', 'master'), [
     color_1,
     color_2,
     card_background,
+    card_background_type,
     questions = []
   } = req.body;
   const creatorId = req.user.userId;
@@ -166,6 +172,11 @@ router.post('/', authenticateToken, requireRole('admin', 'master'), [
 
     const t = await sequelize.transaction();
     try {
+      // Inferência de preferência se não enviada: imagem quando há card_background, cores quando houver color_1/color_2
+      const inferredType = (card_background_type !== undefined)
+        ? card_background_type
+        : (card_background ? 1 : ((color_1 || color_2) ? 0 : null));
+
       const event = await Event.create({
         name,
         slug,
@@ -182,6 +193,7 @@ router.post('/', authenticateToken, requireRole('admin', 'master'), [
         color_1,
         color_2,
         card_background,
+        card_background_type: inferredType,
         created_by: creatorId
       }, { transaction: t });
 
@@ -464,6 +476,7 @@ router.patch('/:id', authenticateToken, requireRole('admin', 'master'), [
   body('color_1').optional().isString(),
   body('color_2').optional().isString(),
   body('card_background').optional().isString(),
+  body('card_background_type').optional().isInt({ min: 0, max: 1 }),
   body('start_datetime').optional().isISO8601().toDate().withMessage('start_datetime deve ser uma data válida'),
   body('end_datetime').optional().isISO8601().toDate().withMessage('end_datetime deve ser uma data válida')
 ], async (req, res) => {
@@ -483,7 +496,7 @@ router.patch('/:id', authenticateToken, requireRole('admin', 'master'), [
       return res.status(403).json({ error: 'Access denied', message: 'Acesso negado' });
     }
 
-    const allowed = ['name', 'slug', 'banner_url', 'description', 'public_url', 'gallery_url', 'place', 'resp_email', 'resp_name', 'resp_phone', 'color_1', 'color_2', 'card_background', 'start_datetime', 'end_datetime'];
+    const allowed = ['name', 'slug', 'banner_url', 'description', 'public_url', 'gallery_url', 'place', 'resp_email', 'resp_name', 'resp_phone', 'color_1', 'color_2', 'card_background', 'card_background_type', 'start_datetime', 'end_datetime'];
     const updateData = {};
     for (const key of allowed) {
       if (req.body[key] !== undefined) updateData[key] = req.body[key];
@@ -501,6 +514,14 @@ router.patch('/:id', authenticateToken, requireRole('admin', 'master'), [
     const newEnd = updateData.end_datetime !== undefined ? updateData.end_datetime : event.end_datetime;
     if (newStart && newEnd && newEnd < newStart) {
       return res.status(400).json({ error: 'Validation error', message: 'end_datetime não pode ser anterior a start_datetime' });
+    }
+
+    // Se não enviar explicitamente o tipo, mas alterar os campos de fundo, re-inferir
+    if (updateData.card_background_type === undefined && (updateData.card_background !== undefined || updateData.color_1 !== undefined || updateData.color_2 !== undefined)) {
+      const finalCardBackground = updateData.card_background !== undefined ? updateData.card_background : event.card_background;
+      const finalColor1 = updateData.color_1 !== undefined ? updateData.color_1 : event.color_1;
+      const finalColor2 = updateData.color_2 !== undefined ? updateData.color_2 : event.color_2;
+      updateData.card_background_type = finalCardBackground ? 1 : ((finalColor1 || finalColor2) ? 0 : null);
     }
 
     await event.update(updateData);

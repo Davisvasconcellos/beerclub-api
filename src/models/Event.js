@@ -81,6 +81,10 @@ const Event = sequelize.define('Event', {
   card_background: {
     type: DataTypes.STRING(255),
     allowNull: true
+  },
+  card_background_type: {
+    type: DataTypes.TINYINT, // 0 = cores (gradient), 1 = imagem
+    allowNull: true
   }
 }, {
   tableName: 'events',
