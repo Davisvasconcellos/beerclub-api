@@ -210,7 +210,39 @@
             }
           },
           "404": { "description": "Evento não encontrado" },
-          "409": { "description": "Duplicidade por email/documento/usuário" }
+          "409": {
+            "description": "Duplicidade por email/documento/usuário",
+            "content": {
+              "application/json": {
+                "examples": {
+                  "Duplicidade email": {
+                    "summary": "Email já está em uso no evento",
+                    "value": {
+                      "error": "Duplicate entry",
+                      "message": "Email já está em uso neste evento",
+                      "details": [ { "field": "guest_email", "issue": "duplicate" } ]
+                    }
+                  },
+                  "Duplicidade documento": {
+                    "summary": "Documento já está em uso no evento",
+                    "value": {
+                      "error": "Duplicate entry",
+                      "message": "Documento já está em uso neste evento",
+                      "details": [ { "field": "guest_document_number", "issue": "duplicate" } ]
+                    }
+                  },
+                  "Duplicidade usuário": {
+                    "summary": "Usuário já associado ao evento",
+                    "value": {
+                      "error": "Duplicate entry",
+                      "message": "Usuário já está associado a este evento",
+                      "details": [ { "field": "user_id", "issue": "duplicate" } ]
+                    }
+                  }
+                }
+              }
+            }
+          }
         }
       }
     },
@@ -311,7 +343,39 @@
             }
           },
           "404": { "description": "Evento/Convidado não encontrado" },
-          "409": { "description": "Duplicidade por email/documento/usuário" }
+          "409": {
+            "description": "Duplicidade por email/documento/usuário",
+            "content": {
+              "application/json": {
+                "examples": {
+                  "Duplicidade email": {
+                    "summary": "Email já está em uso no evento",
+                    "value": {
+                      "error": "Duplicate entry",
+                      "message": "Email já está em uso neste evento",
+                      "details": [ { "field": "guest_email", "issue": "duplicate" } ]
+                    }
+                  },
+                  "Duplicidade documento": {
+                    "summary": "Documento já está em uso no evento",
+                    "value": {
+                      "error": "Duplicate entry",
+                      "message": "Documento já está em uso neste evento",
+                      "details": [ { "field": "guest_document_number", "issue": "duplicate" } ]
+                    }
+                  },
+                  "Duplicidade usuário": {
+                    "summary": "Usuário já associado ao evento",
+                    "value": {
+                      "error": "Duplicate entry",
+                      "message": "Usuário já está associado a este evento",
+                      "details": [ { "field": "user_id", "issue": "duplicate" } ]
+                    }
+                  }
+                }
+              }
+            }
+          }
         }
       }
     },
@@ -481,7 +545,31 @@
             }
           },
           "404": { "description": "Evento não encontrado" },
-          "409": { "description": "Duplicidade por email/documento/usuário" }
+          "409": {
+            "description": "Duplicidade por email/documento/usuário",
+            "content": {
+              "application/json": {
+                "examples": {
+                  "Duplicidade documento": {
+                    "summary": "Documento já está em uso no evento",
+                    "value": {
+                      "error": "Duplicate entry",
+                      "message": "Documento já está em uso neste evento",
+                      "details": [ { "field": "guest_document_number", "issue": "duplicate" } ]
+                    }
+                  },
+                  "Duplicidade usuário": {
+                    "summary": "Usuário já associado ao evento",
+                    "value": {
+                      "error": "Duplicate entry",
+                      "message": "Usuário já está associado a este evento",
+                      "details": [ { "field": "user_id", "issue": "duplicate" } ]
+                    }
+                  }
+                }
+              }
+            }
+          }
         }
       }
     },

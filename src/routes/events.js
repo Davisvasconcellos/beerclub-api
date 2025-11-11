@@ -7,6 +7,36 @@ const { Event, EventQuestion, EventResponse, EventAnswer, User, EventGuest } = r
 
 const router = express.Router();
 
+// Helper para detalhar erros de duplicidade (unique constraint)
+function formatDuplicateError(error) {
+  const sqlMessage = error?.parent?.sqlMessage || '';
+  let field = null;
+  if (sqlMessage.includes('uniq_event_email_guest')) field = 'guest_email';
+  else if (sqlMessage.includes('uniq_event_document_guest')) field = 'guest_document_number';
+  else if (sqlMessage.includes('uniq_event_user_guest')) field = 'user_id';
+  else if (Array.isArray(error?.errors) && error.errors.length) {
+    field = error.errors[0].path || error.errors[0].column || null;
+  }
+
+  let message;
+  switch (field) {
+    case 'guest_email':
+      message = 'Email já está em uso neste evento';
+      break;
+    case 'guest_document_number':
+      message = 'Documento já está em uso neste evento';
+      break;
+    case 'user_id':
+      message = 'Usuário já está associado a este evento';
+      break;
+    default:
+      message = 'Convidado duplicado por email/documento/usuário';
+  }
+
+  const details = field ? [{ field, issue: 'duplicate' }] : [];
+  return { error: 'Duplicate entry', message, details };
+}
+
 /**
  * @swagger
  * /api/v1/events:
@@ -969,7 +999,8 @@ router.post('/:id/checkin/manual', authenticateToken, requireRole('admin', 'mast
   } catch (error) {
     console.error('Manual check-in error:', error);
     if (error.name === 'SequelizeUniqueConstraintError') {
-      return res.status(409).json({ error: 'Duplicate entry', message: 'Convidado duplicado por email/documento/usuário' });
+      const payload = formatDuplicateError(error);
+      return res.status(409).json(payload);
     }
     return res.status(500).json({ error: 'Internal server error', message: 'Erro interno do servidor' });
   }
@@ -1084,7 +1115,8 @@ router.patch('/:id/guests/:guestId', authenticateToken, requireRole('admin', 'ma
   } catch (error) {
     console.error('Update event guest error:', error);
     if (error.name === 'SequelizeUniqueConstraintError') {
-      return res.status(409).json({ error: 'Duplicate entry', message: 'Convidado duplicado por email/documento/usuário' });
+      const payload = formatDuplicateError(error);
+      return res.status(409).json(payload);
     }
     return res.status(500).json({ error: 'Internal server error', message: 'Erro interno do servidor' });
   }
@@ -1306,7 +1338,8 @@ router.post('/:id/guests', authenticateToken, requireRole('admin', 'master'), [
   } catch (error) {
     console.error('Create event guests error:', error);
     if (error.name === 'SequelizeUniqueConstraintError') {
-      return res.status(409).json({ error: 'Duplicate entry', message: 'Convidado duplicado por email/documento/usuário' });
+      const payload = formatDuplicateError(error);
+      return res.status(409).json(payload);
     }
     return res.status(500).json({ error: 'Internal server error', message: 'Erro interno do servidor' });
   }
