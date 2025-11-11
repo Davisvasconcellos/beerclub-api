@@ -94,7 +94,7 @@
               "application/json": {
                 "examples": {
                   "Exemplo": {
-                    "summary": "Resposta com paginação e lista normalizada",
+                    "summary": "Resposta com paginação, lista e estatísticas",
                     "value": {
                       "success": true,
                       "data": {
@@ -114,7 +114,15 @@
                             "checked_in": false,
                             "check_in_method": null
                           }
-                        ]
+                        ],
+                        "stats": {
+                          "total_guests": 200,
+                          "rsvp_count": 120,
+                          "checkin_count": 95,
+                          "by_source": { "invited": 150, "walk_in": 50 },
+                          "by_type": { "normal": 160, "vip": 30, "premium": 10 },
+                          "by_check_in_method": { "google": 25, "staff_manual": 65, "invited_qr": 5 }
+                        }
                       },
                       "meta": { "total": 1, "page": 1, "page_size": 20, "pages": 1 }
                     }

@@ -1246,7 +1246,55 @@ router.get('/:id/guests', authenticateToken, requireRole('admin', 'master'), asy
       };
     });
 
-    return res.json({ success: true, data: { guests: normalized }, meta: { total, page, page_size: pageSize, pages: Math.ceil(total / pageSize) } });
+    // Estatísticas agregadas do evento (não filtradas pelo query atual)
+    const totalGuestsAll = await EventGuest.count({ where: { event_id: event.id } });
+    const rsvpCountAll = await EventGuest.count({ where: { event_id: event.id, rsvp_confirmed: true } });
+    const checkinCountAll = await EventGuest.count({ where: { event_id: event.id, check_in_at: { [Op.ne]: null } } });
+
+    const sourceAgg = await EventGuest.findAll({
+      where: { event_id: event.id },
+      attributes: ['source', [fn('COUNT', col('*')), 'count']],
+      group: ['source']
+    });
+    const typeAgg = await EventGuest.findAll({
+      where: { event_id: event.id },
+      attributes: ['type', [fn('COUNT', col('*')), 'count']],
+      group: ['type']
+    });
+    const methodAgg = await EventGuest.findAll({
+      where: { event_id: event.id, check_in_method: { [Op.ne]: null } },
+      attributes: ['check_in_method', [fn('COUNT', col('*')), 'count']],
+      group: ['check_in_method']
+    });
+
+    const by_source = { invited: 0, walk_in: 0 };
+    for (const row of sourceAgg) {
+      by_source[row.get('source')] = parseInt(row.get('count'), 10);
+    }
+
+    const by_type = { normal: 0, vip: 0, premium: 0 };
+    for (const row of typeAgg) {
+      by_type[row.get('type')] = parseInt(row.get('count'), 10);
+    }
+
+    const by_check_in_method = { google: 0, staff_manual: 0, invited_qr: 0 };
+    for (const row of methodAgg) {
+      const key = row.get('check_in_method');
+      if (by_check_in_method[key] !== undefined) {
+        by_check_in_method[key] = parseInt(row.get('count'), 10);
+      }
+    }
+
+    const stats = {
+      total_guests: totalGuestsAll,
+      rsvp_count: rsvpCountAll,
+      checkin_count: checkinCountAll,
+      by_source,
+      by_type,
+      by_check_in_method
+    };
+
+    return res.json({ success: true, data: { guests: normalized, stats }, meta: { total, page, page_size: pageSize, pages: Math.ceil(total / pageSize) } });
   } catch (error) {
     console.error('List event guests error:', error);
     return res.status(500).json({ error: 'Internal server error', message: 'Erro interno do servidor' });
