@@ -127,6 +127,8 @@ app.use('/api/v1/stores', storeRoutes);
 app.use('/api/v1/football-teams', footballTeamsRoutes);
 app.use('/api/v1/events', eventRoutes);
 app.use('/api/events', eventOpenRoutes);
+// Aliases públicos versionados
+app.use('/api/public/v1/events', eventOpenRoutes);
 
 // Swagger documentation (only in development)
 if (process.env.NODE_ENV === 'development') {

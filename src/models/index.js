@@ -96,6 +96,9 @@ EventQuestion.belongsTo(Event, { foreignKey: 'event_id', as: 'event' });
 
 Event.hasMany(EventResponse, { foreignKey: 'event_id', as: 'responses' });
 EventResponse.belongsTo(Event, { foreignKey: 'event_id', as: 'event' });
+// Vincular respostas ao usuário (quando autenticado)
+EventResponse.belongsTo(User, { foreignKey: 'user_id', as: 'user' });
+User.hasMany(EventResponse, { foreignKey: 'user_id', as: 'eventResponses' });
 
 EventResponse.hasMany(EventAnswer, { foreignKey: 'response_id', as: 'answers' });
 EventAnswer.belongsTo(EventResponse, { foreignKey: 'response_id', as: 'response' });

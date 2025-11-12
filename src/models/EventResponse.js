@@ -16,9 +16,16 @@ const EventResponse = sequelize.define('EventResponse', {
     }
   },
   guest_code: {
-    type: DataTypes.STRING(8),
-    allowNull: false,
-    unique: true
+    type: DataTypes.STRING(255),
+    allowNull: false
+  },
+  user_id: {
+    type: DataTypes.INTEGER,
+    allowNull: true,
+    references: {
+      model: 'users',
+      key: 'id'
+    }
   },
   selfie_url: {
     type: DataTypes.STRING(500),
@@ -31,7 +38,19 @@ const EventResponse = sequelize.define('EventResponse', {
   }
 }, {
   tableName: 'event_responses',
-  timestamps: false
+  timestamps: false,
+  indexes: [
+    {
+      unique: true,
+      fields: ['event_id', 'guest_code'],
+      name: 'uniq_event_guest_code'
+    },
+    {
+      unique: true,
+      fields: ['event_id', 'user_id'],
+      name: 'uniq_event_user'
+    }
+  ]
 });
 
 module.exports = EventResponse;

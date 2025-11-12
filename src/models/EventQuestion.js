@@ -28,7 +28,20 @@ const EventQuestion = sequelize.define('EventQuestion', {
     type: DataTypes.JSON,
     allowNull: true
   },
+  max_choices: {
+    type: DataTypes.INTEGER,
+    allowNull: true
+  },
+  correct_option_index: {
+    type: DataTypes.INTEGER,
+    allowNull: true
+  },
   is_required: {
+    type: DataTypes.BOOLEAN,
+    allowNull: false,
+    defaultValue: true
+  },
+  is_public: {
     type: DataTypes.BOOLEAN,
     allowNull: false,
     defaultValue: true

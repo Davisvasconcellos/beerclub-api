@@ -3,7 +3,8 @@ const { body, validationResult } = require('express-validator');
 const { authenticateToken, requireRole } = require('../middlewares/auth');
 const { sequelize } = require('../config/database');
 const { Op, fn, col } = require('sequelize');
-const { Event, EventQuestion, EventResponse, EventAnswer, User, EventGuest } = require('../models');
+const { Event, EventQuestion, EventResponse, EventAnswer, User, EventGuest, TokenBlocklist } = require('../models');
+const jwt = require('jsonwebtoken');
 
 const router = express.Router();
 
@@ -103,11 +104,52 @@ function formatDuplicateError(error) {
  *                     options:
  *                       type: array
  *                       items:
- *                         type: string
+ *                         oneOf:
+ *                           - type: string
+ *                           - type: object
+ *                             properties:
+ *                               label:
+ *                                 type: string
+ *                               is_correct:
+ *                                 type: boolean
+ *                             required: [label]
+ *                     max_choices:
+ *                       type: integer
+ *                       description: Limite de seleções (apenas para checkbox)
+ *                     correct_option_index:
+ *                       type: integer
+ *                       description: Índice da opção correta (apenas para radio)
+ *                     is_public:
+ *                       type: boolean
  *                     is_required:
  *                       type: boolean
  *                     show_results:
  *                       type: boolean
+ *           example:
+ *             name: "BeerClub Fest"
+ *             slug: "beerclub-fest-2025"
+ *             description: "Degustação e votação de estilos"
+ *             start_datetime: "2025-11-20T18:00:00Z"
+ *             end_datetime: "2025-11-20T21:00:00Z"
+ *             place: "Taproom Central"
+ *             questions:
+ *               - text: "Qual estilo você prefere?"
+ *                 type: "radio"
+ *                 options:
+ *                   - { label: "Lager" }
+ *                   - { label: "IPA", is_correct: true }
+ *                   - { label: "Stout" }
+ *                 is_public: true
+ *                 show_results: true
+ *               - text: "Quais maltes você escolhe?"
+ *                 type: "checkbox"
+ *                 options:
+ *                   - { label: "Pils" }
+ *                   - { label: "Cara" }
+ *                   - { label: "Munich" }
+ *                 max_choices: 2
+ *                 is_public: true
+ *                 show_results: true
  *     responses:
  *       201:
  *         description: Evento criado com sucesso
@@ -199,15 +241,66 @@ router.post('/', authenticateToken, requireRole('admin', 'master'), [
 
       // Criar perguntas, se houver
       if (Array.isArray(questions) && questions.length) {
-        const payload = questions.map((q, idx) => ({
-          event_id: event.id,
-          question_text: q.text,
-          question_type: q.type || 'text',
-          options: q.options || null,
-          is_required: q.is_required !== undefined ? !!q.is_required : true,
-          show_results: q.show_results !== undefined ? !!q.show_results : true,
-          order_index: idx
-        }));
+        const payload = [];
+        for (let idx = 0; idx < questions.length; idx++) {
+          const q = questions[idx];
+          const type = q.type || 'text';
+          const rawOptions = Array.isArray(q.options) ? q.options : (q.options || null);
+          const labels = Array.isArray(rawOptions) ? rawOptions.map(o => (typeof o === 'string') ? o : (o && o.label)).filter(v => typeof v === 'string') : [];
+          let correctIndex = null;
+          let maxChoices = null;
+
+          if (type === 'radio') {
+            if (q.correct_option_index !== undefined) {
+              const idxVal = parseInt(q.correct_option_index, 10);
+              if (!Array.isArray(rawOptions) || idxVal < 0 || idxVal >= labels.length) {
+                await t.rollback();
+                return res.status(400).json({ error: 'Validation error', message: `correct_option_index fora do intervalo de options na pergunta ${idx}` });
+              }
+              correctIndex = idxVal;
+            } else if (Array.isArray(rawOptions)) {
+              const markers = rawOptions.filter(o => o && typeof o === 'object' && o.is_correct === true);
+              if (markers.length > 1) {
+                await t.rollback();
+                return res.status(400).json({ error: 'Validation error', message: `Apenas uma opção pode ser marcada como is_correct na pergunta ${idx}` });
+              }
+              if (markers.length === 1) {
+                const mIdx = rawOptions.findIndex(o => o && typeof o === 'object' && o.is_correct === true);
+                if (mIdx < 0 || mIdx >= labels.length) {
+                  await t.rollback();
+                  return res.status(400).json({ error: 'Validation error', message: `Opção correta inválida na pergunta ${idx}` });
+                }
+                correctIndex = mIdx;
+              }
+            }
+            if (labels.length === 0 && correctIndex !== null) {
+              await t.rollback();
+              return res.status(400).json({ error: 'Validation error', message: `Não é possível definir correct_option_index sem options na pergunta ${idx}` });
+            }
+          }
+
+          if (type === 'checkbox' && q.max_choices !== undefined) {
+            const mc = parseInt(q.max_choices, 10);
+            if (!(mc >= 1)) {
+              await t.rollback();
+              return res.status(400).json({ error: 'Validation error', message: `max_choices deve ser >= 1 na pergunta ${idx}` });
+            }
+            maxChoices = mc;
+          }
+
+          payload.push({
+            event_id: event.id,
+            question_text: q.text,
+            question_type: type,
+            options: rawOptions,
+            max_choices: maxChoices,
+            correct_option_index: correctIndex,
+            is_required: q.is_required !== undefined ? !!q.is_required : true,
+            is_public: q.is_public !== undefined ? !!q.is_public : true,
+            show_results: q.show_results !== undefined ? !!q.show_results : true,
+            order_index: idx
+          });
+        }
         await EventQuestion.bulkCreate(payload, { transaction: t });
       }
 
@@ -622,6 +715,316 @@ router.get('/:id/questions', authenticateToken, requireRole('admin', 'master'), 
 
 /**
  * @swagger
+ * /api/v1/events/{id}/questions/{questionId}/stats:
+ *   get:
+ *     summary: Estatísticas de respostas por opção (admin/master)
+ *     tags: [Events]
+ *     security:
+ *       - bearerAuth: []
+ *     parameters:
+ *       - in: path
+ *         name: id
+ *         required: true
+ *         schema:
+ *           type: string
+ *           format: uuid
+ *         description: id_code do evento (UUID)
+ *       - in: path
+ *         name: questionId
+ *         required: true
+ *         schema:
+ *           type: integer
+ *     responses:
+ *       200:
+ *         description: Estatísticas agregadas por opção
+ *       404:
+ *         description: Evento/Pergunta não encontrado
+ */
+router.get('/:id/questions/:questionId/stats', authenticateToken, requireRole('admin', 'master'), async (req, res) => {
+  try {
+    const { id, questionId } = req.params;
+    const event = await Event.findOne({ where: { id_code: id } });
+    if (!event) {
+      return res.status(404).json({ error: 'Not found', message: 'Evento não encontrado' });
+    }
+    if (req.user.role !== 'master' && event.created_by !== req.user.userId) {
+      return res.status(403).json({ error: 'Access denied', message: 'Acesso negado' });
+    }
+
+    const question = await EventQuestion.findOne({ where: { id: questionId, event_id: event.id } });
+    if (!question) {
+      return res.status(404).json({ error: 'Not found', message: 'Pergunta não encontrada' });
+    }
+    if (!['radio', 'checkbox'].includes(question.question_type)) {
+      return res.status(400).json({ error: 'Unsupported', message: 'Estatísticas disponíveis apenas para tipos radio/checkbox' });
+    }
+
+    // Extrair labels de opções de forma robusta e sanitizar marcador [c]
+    let items = [];
+    const raw = question.options;
+    if (Array.isArray(raw)) items = raw;
+    else if (typeof raw === 'string') {
+      try {
+        const parsed = JSON.parse(raw);
+        if (Array.isArray(parsed)) items = parsed;
+        else if (parsed && Array.isArray(parsed.options)) items = parsed.options;
+        else if (parsed && Array.isArray(parsed.labels)) items = parsed.labels;
+      } catch (_) {
+        items = [];
+      }
+    } else if (raw && typeof raw === 'object') {
+      if (Array.isArray(raw.options)) items = raw.options;
+      else if (Array.isArray(raw.labels)) items = raw.labels;
+    }
+
+    const labels = items
+      .map(o => (typeof o === 'string') ? o : (o && o.label))
+      .filter(v => typeof v === 'string' && v.length > 0)
+      .map(v => v.replace(/\s*\[c\]\s*$/i, ''));
+    const counts = new Map(labels.map(o => [o, 0]));
+
+    const answers = await EventAnswer.findAll({ where: { question_id: question.id } });
+    for (const a of answers) {
+      if (question.question_type === 'radio') {
+        let sel = undefined;
+        if (typeof a.answer_text === 'string' && a.answer_text.length) sel = a.answer_text;
+        else if (a.answer_json && typeof a.answer_json === 'object' && typeof a.answer_json.label === 'string') sel = a.answer_json.label;
+        else if (typeof a.answer_json === 'string') {
+          try {
+            const parsed = JSON.parse(a.answer_json);
+            if (parsed && typeof parsed === 'object' && typeof parsed.label === 'string') sel = parsed.label;
+          } catch (_) {}
+        }
+        if (typeof sel === 'string') {
+          const s = sel.replace(/\s*\[c\]\s*$/i, '');
+          if (counts.has(s)) counts.set(s, counts.get(s) + 1);
+        }
+      } else if (question.question_type === 'checkbox') {
+        let arr = [];
+        if (Array.isArray(a.answer_json)) arr = a.answer_json;
+        else if (typeof a.answer_json === 'string') {
+          try {
+            const parsed = JSON.parse(a.answer_json);
+            if (Array.isArray(parsed)) arr = parsed;
+          } catch (_) {}
+        }
+        if (arr.length === 0 && typeof a.answer_text === 'string') {
+          try {
+            const parsed = JSON.parse(a.answer_text);
+            if (Array.isArray(parsed)) arr = parsed;
+          } catch (_) {
+            if (a.answer_text.includes(',')) {
+              arr = a.answer_text.split(',').map(s => s.trim()).filter(Boolean);
+            } else if (a.answer_text.trim().length) {
+              arr = [a.answer_text.trim()];
+            }
+          }
+        }
+        for (const vRaw of arr) {
+          const v = typeof vRaw === 'string' ? vRaw.replace(/\s*\[c\]\s*$/i, '') : vRaw;
+          if (typeof v === 'string' && counts.has(v)) {
+            counts.set(v, counts.get(v) + 1);
+          }
+        }
+      }
+    }
+
+    const total = answers.length;
+    const result = labels.map((o, idx) => {
+      const c = counts.get(o) || 0;
+      return { option: o, index: idx, count: c, percent: total ? Math.round((c / total) * 10000) / 100 : 0 };
+    });
+
+    let correct_count = null;
+    let accuracy_percent = null;
+    if (question.question_type === 'radio' && typeof question.correct_option_index === 'number' && question.correct_option_index >= 0) {
+      const correctOption = labels[question.correct_option_index];
+      const c = typeof correctOption !== 'undefined' ? (counts.get(correctOption) || 0) : 0;
+      correct_count = c;
+      accuracy_percent = total ? Math.round((c / total) * 10000) / 100 : 0;
+    }
+
+    return res.json({
+      success: true,
+      data: {
+        question_id: question.id,
+        type: question.question_type,
+        total_answers: total,
+        options: labels,
+        counts: result,
+        correct_option_index: question.correct_option_index ?? null,
+        correct_count,
+        accuracy_percent
+      }
+    });
+  } catch (error) {
+    console.error('Stats question error:', error);
+    return res.status(500).json({ error: 'Internal server error', message: 'Erro interno do servidor' });
+  }
+});
+
+/**
+ * @swagger
+ * /api/v1/events/{id}/stats:
+ *   get:
+ *     summary: Estatísticas agregadas do evento (admin/master)
+ *     tags: [Events]
+ *     security:
+ *       - bearerAuth: []
+ *     parameters:
+ *       - in: path
+ *         name: id
+ *         required: true
+ *         schema:
+ *           type: string
+ *           format: uuid
+ *         description: id_code do evento (UUID)
+ *     responses:
+ *       200:
+ *         description: Estatísticas agregadas por pergunta e opções
+ *         content:
+ *           application/json:
+ *             example:
+ *               success: true
+ *               data:
+ *                 event_id: 42
+ *                 total_questions: 3
+ *                 event_total_answers: 25
+ *                 questions_stats:
+ *                   - question_id: 101
+ *                     text: Qual estilo você prefere?
+ *                     type: radio
+ *                     is_public: true
+ *                     show_results: true
+ *                     total_answers: 10
+ *                     options: [Lager, IPA, Stout]
+ *                     counts:
+ *                       - option: Lager
+ *                         index: 0
+ *                         count: 3
+ *                         percent: 30
+ *                       - option: IPA
+ *                         index: 1
+ *                         count: 5
+ *                         percent: 50
+ *                       - option: Stout
+ *                         index: 2
+ *                         count: 2
+ *                         percent: 20
+ *                     correct_option_index: 1
+ *                     correct_count: 5
+ *                     accuracy_percent: 50
+ *                   - question_id: 102
+ *                     text: Quais maltes você escolhe?
+ *                     type: checkbox
+ *                     is_public: true
+ *                     show_results: true
+ *                     total_answers: 8
+ *                     options: [Pils, Cara, Munich]
+ *                     counts:
+ *                       - option: Pils
+ *                         index: 0
+ *                         count: 6
+ *                         percent: 75
+ *                       - option: Cara
+ *                         index: 1
+ *                         count: 3
+ *                         percent: 37.5
+ *                       - option: Munich
+ *                         index: 2
+ *                         count: 4
+ *                         percent: 50
+ *       404:
+ *         description: Evento não encontrado
+ */
+router.get('/:id/stats', authenticateToken, requireRole('admin', 'master'), async (req, res) => {
+  try {
+    const { id } = req.params;
+    const event = await Event.findOne({ where: { id_code: id } });
+    if (!event) {
+      return res.status(404).json({ error: 'Not found', message: 'Evento não encontrado' });
+    }
+    if (req.user.role !== 'master' && event.created_by !== req.user.userId) {
+      return res.status(403).json({ error: 'Access denied', message: 'Acesso negado' });
+    }
+
+    const questions = await EventQuestion.findAll({ where: { event_id: event.id }, order: [['order_index', 'ASC']] });
+    const questionsStats = [];
+    let eventTotalAnswers = 0;
+
+    for (const q of questions) {
+      const rawOpts = Array.isArray(q.options) ? q.options : [];
+      const labels = rawOpts.map(o => (typeof o === 'string') ? o : (o && o.label)).filter(v => typeof v === 'string');
+      const counts = new Map(labels.map(o => [o, 0]));
+
+      const answers = await EventAnswer.findAll({ where: { question_id: q.id } });
+      eventTotalAnswers += answers.length;
+
+      if (q.question_type === 'radio') {
+        for (const a of answers) {
+          if (typeof a.answer_text === 'string' && counts.has(a.answer_text)) {
+            counts.set(a.answer_text, counts.get(a.answer_text) + 1);
+          }
+        }
+      } else if (q.question_type === 'checkbox') {
+        for (const a of answers) {
+          if (Array.isArray(a.answer_json)) {
+            for (const v of a.answer_json) {
+              if (counts.has(v)) counts.set(v, counts.get(v) + 1);
+            }
+          }
+        }
+      } else {
+        // Tipos não suportados para contagem por opção; apenas total
+      }
+
+      const total = answers.length;
+      const optionsCounts = labels.map((o, idx) => {
+        const c = counts.get(o) || 0;
+        return { option: o, index: idx, count: c, percent: total ? Math.round((c / total) * 10000) / 100 : 0 };
+      });
+
+      let correct_count = null;
+      let accuracy_percent = null;
+      if (q.question_type === 'radio' && typeof q.correct_option_index === 'number' && q.correct_option_index >= 0) {
+        const correctOption = labels[q.correct_option_index];
+        const c = typeof correctOption !== 'undefined' ? (counts.get(correctOption) || 0) : 0;
+        correct_count = c;
+        accuracy_percent = total ? Math.round((c / total) * 10000) / 100 : 0;
+      }
+
+      questionsStats.push({
+        question_id: q.id,
+        text: q.question_text,
+        type: q.question_type,
+        is_public: q.is_public,
+        show_results: q.show_results,
+        total_answers: total,
+        options: labels,
+        counts: optionsCounts,
+        correct_option_index: q.correct_option_index ?? null,
+        correct_count,
+        accuracy_percent
+      });
+    }
+
+    return res.json({
+      success: true,
+      data: {
+        event_id: event.id,
+        total_questions: questions.length,
+        event_total_answers: eventTotalAnswers,
+        questions_stats: questionsStats
+      }
+    });
+  } catch (error) {
+    console.error('Admin stats event error:', error);
+    return res.status(500).json({ error: 'Internal server error', message: 'Erro interno do servidor' });
+  }
+});
+
+/**
+ * @swagger
  * /api/v1/events/{id}/questions:
  *   post:
  *     summary: Criar nova pergunta para o evento (admin/master)
@@ -652,13 +1055,40 @@ router.get('/:id/questions', authenticateToken, requireRole('admin', 'master'), 
  *               options:
  *                 type: array
  *                 items:
- *                   type: string
+ *                   oneOf:
+ *                     - type: string
+ *                     - type: object
+ *                       properties:
+ *                         label:
+ *                           type: string
+ *                         is_correct:
+ *                           type: boolean
+ *                       required: [label]
+ *               max_choices:
+ *                 type: integer
+ *                 description: Limite de seleções (apenas para checkbox)
+ *               correct_option_index:
+ *                 type: integer
+ *                 description: Índice da opção correta (apenas para radio)
+ *               is_public:
+ *                 type: boolean
  *               is_required:
  *                 type: boolean
  *               show_results:
  *                 type: boolean
  *               order_index:
  *                 type: integer
+ *           example:
+ *             text: "Qual estilo você prefere?"
+ *             type: "radio"
+ *             options:
+ *               - { label: "Lager" }
+ *               - { label: "IPA", is_correct: true }
+ *               - { label: "Stout" }
+ *             is_public: true
+ *             is_required: true
+ *             show_results: true
+ *             order_index: 0
  *     responses:
  *       201:
  *         description: Pergunta criada com sucesso
@@ -669,7 +1099,10 @@ router.post('/:id/questions', authenticateToken, requireRole('admin', 'master'),
   body('text').isLength({ min: 1 }).withMessage('text é obrigatório'),
   body('type').isIn(['text', 'textarea', 'radio', 'checkbox', 'rating', 'music_preference']).withMessage('type inválido'),
   body('options').optional(),
+  body('max_choices').optional().isInt({ min: 1 }).withMessage('max_choices deve ser inteiro >= 1'),
+  body('correct_option_index').optional().isInt({ min: 0 }).withMessage('correct_option_index deve ser inteiro >= 0'),
   body('is_required').optional().isBoolean(),
+  body('is_public').optional().isBoolean(),
   body('show_results').optional().isBoolean(),
   body('order_index').optional().isInt({ min: 0 })
 ], async (req, res) => {
@@ -691,12 +1124,54 @@ router.post('/:id/questions', authenticateToken, requireRole('admin', 'master'),
     const maxOrder = await EventQuestion.max('order_index', { where: { event_id: event.id } });
     const orderIndex = (req.body.order_index !== undefined) ? parseInt(req.body.order_index, 10) : (Number.isFinite(maxOrder) ? maxOrder + 1 : 0);
 
+    // Validar campos específicos por tipo
+    const isRadio = req.body.type === 'radio';
+    const isCheckbox = req.body.type === 'checkbox';
+    const options = Array.isArray(req.body.options) ? req.body.options : (req.body.options || null);
+    const labels = Array.isArray(options) ? options.map(o => (typeof o === 'string') ? o : (o && o.label)).filter(v => typeof v === 'string') : [];
+    let correctIndex = null;
+    let maxChoices = null;
+    if (isRadio) {
+      if (req.body.correct_option_index !== undefined) {
+        const idx = parseInt(req.body.correct_option_index, 10);
+        if (!Array.isArray(options) || idx < 0 || idx >= labels.length) {
+          return res.status(400).json({ error: 'Validation error', message: 'correct_option_index fora do intervalo de options' });
+        }
+        correctIndex = idx;
+      } else if (Array.isArray(options)) {
+        const markers = options.filter(o => o && typeof o === 'object' && o.is_correct === true);
+        if (markers.length > 1) {
+          return res.status(400).json({ error: 'Validation error', message: 'Apenas uma opção pode ser marcada como is_correct' });
+        }
+        if (markers.length === 1) {
+          const idx = options.findIndex(o => o && typeof o === 'object' && o.is_correct === true);
+          if (idx < 0 || idx >= labels.length) {
+            return res.status(400).json({ error: 'Validation error', message: 'Opção correta inválida' });
+          }
+          correctIndex = idx;
+        }
+      }
+      if (labels.length === 0 && correctIndex !== null) {
+        return res.status(400).json({ error: 'Validation error', message: 'Não é possível definir correct_option_index sem opções' });
+      }
+    }
+    if (isCheckbox && req.body.max_choices !== undefined) {
+      const mc = parseInt(req.body.max_choices, 10);
+      if (!(mc >= 1)) {
+        return res.status(400).json({ error: 'Validation error', message: 'max_choices deve ser >= 1' });
+      }
+      maxChoices = mc;
+    }
+
     const question = await EventQuestion.create({
       event_id: event.id,
       question_text: req.body.text,
       question_type: req.body.type,
-      options: Array.isArray(req.body.options) ? req.body.options : (req.body.options || null),
+      options,
+      max_choices: maxChoices,
+      correct_option_index: correctIndex,
       is_required: req.body.is_required !== undefined ? !!req.body.is_required : true,
+      is_public: req.body.is_public !== undefined ? !!req.body.is_public : true,
       show_results: req.body.show_results !== undefined ? !!req.body.show_results : true,
       order_index: orderIndex
     });
@@ -744,13 +1219,34 @@ router.post('/:id/questions', authenticateToken, requireRole('admin', 'master'),
  *               options:
  *                 type: array
  *                 items:
- *                   type: string
+ *                   oneOf:
+ *                     - type: string
+ *                     - type: object
+ *                       properties:
+ *                         label:
+ *                           type: string
+ *                         is_correct:
+ *                           type: boolean
+ *                       required: [label]
+ *               is_public:
+ *                 type: boolean
  *               is_required:
  *                 type: boolean
  *               show_results:
  *                 type: boolean
  *               order_index:
  *                 type: integer
+ *           example:
+ *             text: "Atualize opções da pergunta"
+ *             type: "radio"
+ *             options:
+ *               - { label: "Lager" }
+ *               - { label: "IPA", is_correct: true }
+ *               - { label: "Stout" }
+ *             correct_option_index: 1
+ *             is_public: true
+ *             show_results: true
+ *             order_index: 1
  *     responses:
  *       200:
  *         description: Pergunta atualizada com sucesso
@@ -761,7 +1257,10 @@ router.patch('/:id/questions/:questionId', authenticateToken, requireRole('admin
   body('text').optional().isLength({ min: 1 }),
   body('type').optional().isIn(['text', 'textarea', 'radio', 'checkbox', 'rating', 'music_preference']),
   body('options').optional(),
+  body('max_choices').optional().isInt({ min: 1 }),
+  body('correct_option_index').optional().isInt({ min: 0 }),
   body('is_required').optional().isBoolean(),
+  body('is_public').optional().isBoolean(),
   body('show_results').optional().isBoolean(),
   body('order_index').optional().isInt({ min: 0 })
 ], async (req, res) => {
@@ -785,14 +1284,55 @@ router.patch('/:id/questions/:questionId', authenticateToken, requireRole('admin
       return res.status(404).json({ error: 'Not found', message: 'Pergunta não encontrada' });
     }
 
-    const allowed = ['question_text', 'question_type', 'options', 'is_required', 'show_results', 'order_index'];
+    const allowed = ['question_text', 'question_type', 'options', 'max_choices', 'correct_option_index', 'is_required', 'is_public', 'show_results', 'order_index'];
     const updateData = {};
     if (req.body.text !== undefined) updateData.question_text = req.body.text;
     if (req.body.type !== undefined) updateData.question_type = req.body.type;
     if (req.body.options !== undefined) updateData.options = Array.isArray(req.body.options) ? req.body.options : req.body.options;
+    if (req.body.max_choices !== undefined) updateData.max_choices = parseInt(req.body.max_choices, 10);
+    if (req.body.correct_option_index !== undefined) updateData.correct_option_index = parseInt(req.body.correct_option_index, 10);
     if (req.body.is_required !== undefined) updateData.is_required = !!req.body.is_required;
+    if (req.body.is_public !== undefined) updateData.is_public = !!req.body.is_public;
     if (req.body.show_results !== undefined) updateData.show_results = !!req.body.show_results;
     if (req.body.order_index !== undefined) updateData.order_index = parseInt(req.body.order_index, 10);
+
+    // Validações coerentes com tipo/opções
+    const effectiveType = updateData.question_type || question.question_type;
+    const effectiveRawOptions = (updateData.options !== undefined) ? updateData.options : (question.options || []);
+    const effectiveLabels = Array.isArray(effectiveRawOptions) ? effectiveRawOptions.map(o => (typeof o === 'string') ? o : (o && o.label)).filter(v => typeof v === 'string') : [];
+
+    // Derivar correct_option_index a partir de is_correct quando opções forem objetos e type radio
+    if (effectiveType === 'radio' && updateData.correct_option_index === undefined && Array.isArray(updateData.options)) {
+      const markers = updateData.options.filter(o => o && typeof o === 'object' && o.is_correct === true);
+      if (markers.length > 1) {
+        return res.status(400).json({ error: 'Validation error', message: 'Apenas uma opção pode ser marcada como is_correct' });
+      }
+      if (markers.length === 1) {
+        const idx = updateData.options.findIndex(o => o && typeof o === 'object' && o.is_correct === true);
+        if (idx < 0 || idx >= effectiveLabels.length) {
+          return res.status(400).json({ error: 'Validation error', message: 'Opção correta inválida' });
+        }
+        updateData.correct_option_index = idx;
+      }
+    }
+
+    if (updateData.correct_option_index !== undefined) {
+      if (effectiveType !== 'radio') {
+        return res.status(400).json({ error: 'Validation error', message: 'correct_option_index só é válido para perguntas do tipo radio' });
+      }
+      const idx = updateData.correct_option_index;
+      if (!Array.isArray(effectiveRawOptions) || idx < 0 || idx >= effectiveLabels.length) {
+        return res.status(400).json({ error: 'Validation error', message: 'correct_option_index fora do intervalo de options' });
+      }
+    }
+    if (updateData.max_choices !== undefined) {
+      if (effectiveType !== 'checkbox') {
+        return res.status(400).json({ error: 'Validation error', message: 'max_choices só é válido para perguntas do tipo checkbox' });
+      }
+      if (!(updateData.max_choices >= 1)) {
+        return res.status(400).json({ error: 'Validation error', message: 'max_choices deve ser >= 1' });
+      }
+    }
 
     // Garantir que só campos permitidos sejam atualizados
     for (const key of Object.keys(updateData)) {
@@ -1415,3 +1955,825 @@ router.post('/:id/guests', authenticateToken, requireRole('admin', 'master'), [
 });
 
 module.exports = router;
+/**
+ * @swagger
+ * /api/v1/events/{id}/questions-with-answers:
+ *   get:
+ *     summary: Retorna perguntas do evento com respostas pré-preenchidas (auth opcional)
+ *     tags: [Events]
+ *     parameters:
+ *       - in: path
+ *         name: id
+ *         required: true
+ *         schema:
+ *           type: string
+ *           format: uuid
+ *         description: id_code do evento (UUID)
+ *       - in: query
+ *         name: guest_code
+ *         schema:
+ *           type: string
+ *         description: Necessário quando não autenticado para pré-preencher respostas
+ *       - in: header
+ *         name: Authorization
+ *         schema:
+ *           type: string
+ *         description: Bearer token. Quando presente e válido, retorna perguntas privadas também.
+ *     responses:
+ *       200:
+ *         description: Perguntas com respostas pré-preenchidas
+ *         content:
+ *           application/json:
+ *             example:
+ *               success: true
+ *               data:
+ *                 event_id: 123
+ *                 id_code: "uuid-do-evento"
+ *                 total_questions: 7
+ *                 questions:
+ *                   - id: 10
+ *                     text: "Qual seu estilo favorito?"
+ *                     type: "radio"
+ *                     options: ["IPA","Lager","Stout"]
+ *                     selected_labels: ["IPA"]
+ *       401:
+ *         description: Token inválido ou usuário não encontrado (quando Authorization enviado)
+ *       404:
+ *         description: Evento não encontrado
+ */
+// GET /api/v1/events/:id/questions-with-answers — alias com auth opcional
+router.get('/:id/questions-with-answers', async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { guest_code } = req.query;
+
+    const authHeader = req.headers['authorization'];
+    const token = authHeader && authHeader.split(' ')[1];
+    let isAuthenticated = false;
+    let authUserId = null;
+    if (token) {
+      try {
+        const isBlocked = await TokenBlocklist.findByPk(token);
+        if (isBlocked) {
+          return res.status(401).json({ message: 'Token inválido' });
+        }
+        const decoded = jwt.verify(token, process.env.JWT_SECRET);
+        const user = await User.findByPk(decoded.userId);
+        if (!user) {
+          return res.status(401).json({ message: 'Usuário não encontrado' });
+        }
+        isAuthenticated = true;
+        authUserId = decoded.userId;
+      } catch (err) {
+        return res.status(403).json({ message: 'Token inválido ou expirado' });
+      }
+    }
+
+    if (!isAuthenticated && !guest_code) {
+      return res.status(400).json({ error: 'Validation error', message: 'guest_code é obrigatório' });
+    }
+
+    const event = await Event.findOne({ where: { id_code: id } });
+    if (!event) {
+      return res.status(404).json({ error: 'Not Found', message: 'Evento não encontrado' });
+    }
+
+    const questions = await EventQuestion.findAll({
+      where: isAuthenticated ? { event_id: event.id } : { event_id: event.id, is_public: true },
+      attributes: ['id', 'question_text', 'question_type', 'options', 'order_index'],
+      order: [['order_index', 'ASC']]
+    });
+
+    let response = null;
+    if (isAuthenticated) {
+      response = await EventResponse.findOne({ where: { event_id: event.id, user_id: authUserId } });
+      if (!response && guest_code) {
+        response = await EventResponse.findOne({ where: { event_id: event.id, guest_code } });
+      }
+    } else {
+      response = await EventResponse.findOne({ where: { event_id: event.id, guest_code } });
+    }
+
+    const answers = response ? await EventAnswer.findAll({ where: { response_id: response.id } }) : [];
+    const answersByQuestion = new Map(answers.map(a => [a.question_id, a]));
+
+    const payloadQuestions = questions.map(q => {
+      const raw = q.options;
+      let items = [];
+      if (Array.isArray(raw)) {
+        items = raw;
+      } else if (typeof raw === 'string') {
+        try {
+          const parsed = JSON.parse(raw);
+          if (Array.isArray(parsed)) items = parsed;
+          else if (parsed && Array.isArray(parsed.options)) items = parsed.options;
+          else if (parsed && Array.isArray(parsed.labels)) items = parsed.labels;
+        } catch (_) {
+          items = [];
+        }
+      } else if (raw && typeof raw === 'object') {
+        if (Array.isArray(raw.options)) items = raw.options;
+        else if (Array.isArray(raw.labels)) items = raw.labels;
+      }
+
+      const labels = items
+        .map(o => (typeof o === 'string') ? o : (o && o.label))
+        .filter(v => typeof v === 'string' && v.length > 0)
+        .map(v => v.replace(/\s*\[c\]\s*$/i, ''));
+      const ans = answersByQuestion.get(q.id);
+      let selected_labels = undefined;
+      let selected_value = undefined;
+      if (ans) {
+        if (q.question_type === 'radio') {
+          if (typeof ans.answer_text === 'string' && ans.answer_text.length) {
+            selected_labels = [ans.answer_text];
+          }
+        } else if (q.question_type === 'checkbox') {
+          if (Array.isArray(ans.answer_json)) {
+            selected_labels = ans.answer_json;
+          } else if (typeof ans.answer_json === 'string') {
+            try {
+              const parsed = JSON.parse(ans.answer_json);
+              if (Array.isArray(parsed)) selected_labels = parsed;
+            } catch (_) {
+              // ignorar se não for JSON válido
+            }
+          } else if (typeof ans.answer_text === 'string') {
+            let arr = [];
+            try {
+              const parsed = JSON.parse(ans.answer_text);
+              if (Array.isArray(parsed)) arr = parsed;
+            } catch (_) {
+              if (ans.answer_text.includes(',')) {
+                arr = ans.answer_text.split(',').map(s => s.trim()).filter(Boolean);
+              } else if (ans.answer_text.trim().length) {
+                arr = [ans.answer_text.trim()];
+              }
+            }
+            if (arr.length) selected_labels = arr;
+          }
+        } else if (q.question_type === 'rating') {
+          if (ans.answer_json && typeof ans.answer_json === 'object' && ans.answer_json.value != null) {
+            const v = Number(ans.answer_json.value);
+            if (!Number.isNaN(v)) selected_value = v;
+          } else if (typeof ans.answer_json === 'string') {
+            try {
+              const parsed = JSON.parse(ans.answer_json);
+              if (parsed && typeof parsed === 'object' && parsed.value != null) {
+                const v = Number(parsed.value);
+                if (!Number.isNaN(v)) selected_value = v;
+              }
+            } catch (_) {
+              // ignorar se não for JSON válido
+            }
+          } else if (typeof ans.answer_text === 'string') {
+            const v = Number(ans.answer_text);
+            if (!Number.isNaN(v)) selected_value = v;
+          }
+        } else if (q.question_type === 'text' || q.question_type === 'textarea') {
+          if (typeof ans.answer_text === 'string' && ans.answer_text.trim().length) {
+            selected_labels = [ans.answer_text.trim()];
+          }
+        }
+      }
+      if (Array.isArray(selected_labels)) {
+        selected_labels = selected_labels.map(v => typeof v === 'string' ? v.replace(/\s*\[c\]\s*$/i, '') : v);
+      }
+      return {
+        id: q.id,
+        text: q.question_text,
+        type: q.question_type,
+        options: labels.length ? labels : null,
+        selected_labels,
+        selected_value
+      };
+    });
+
+    return res.json({
+      success: true,
+      data: {
+        event_id: event.id,
+        id_code: event.id_code,
+        total_questions: payloadQuestions.length,
+        questions: payloadQuestions
+      }
+    });
+  } catch (error) {
+    console.error('Questions with answers (v1 alias) error:', error);
+    return res.status(500).json({ error: 'Internal server error', message: 'Erro interno do servidor' });
+  }
+});
+/**
+ * @swagger
+ * /api/v1/events/{id}/responses:
+ *   post:
+ *     summary: Enviar respostas de evento (autenticado)
+ *     tags: [Events]
+ *     security:
+ *       - bearerAuth: []
+ *     parameters:
+ *       - in: path
+ *         name: id
+ *         required: true
+ *         schema:
+ *           type: string
+ *           format: uuid
+ *         description: id_code do evento (UUID)
+ *     requestBody:
+ *       required: true
+ *       content:
+ *         application/json:
+ *           schema:
+ *             type: object
+ *             required: [answers]
+ *             properties:
+ *               selfie_url:
+ *                 type: string
+ *               answers:
+ *                 type: array
+ *                 items:
+ *                   type: object
+ *                   required: [question_id]
+ *                   properties:
+ *                     question_id:
+ *                       type: integer
+ *                     answer_text:
+ *                       type: string
+ *                     answer_json:
+ *                       type: object
+ *           example:
+ *             selfie_url: "https://example.com/selfies/user-42.jpg"
+ *             answers:
+ *               - question_id: 101
+ *                 answer_json:
+ *                   selected_labels: ["IPA"]
+ *               - question_id: 102
+ *                 answer_json:
+ *                   selected_labels: ["Pils", "Munich"]
+ *     responses:
+ *       201:
+ *         description: Respostas registradas com sucesso
+ *       404:
+ *         description: Evento não encontrado
+ *       409:
+ *         description: Usuário já respondeu este evento
+ */
+router.post('/:id/responses', authenticateToken, [
+  body('selfie_url').optional().isURL().withMessage('selfie_url inválida'),
+  body('answers').isArray({ min: 1 }).withMessage('answers deve ser uma lista')
+], async (req, res) => {
+  const errors = validationResult(req);
+  if (!errors.isEmpty()) {
+    return res.status(400).json({ error: 'Validation error', details: errors.array() });
+  }
+
+  const { id } = req.params;
+  const { selfie_url, answers } = req.body;
+
+  try {
+    const event = await Event.findOne({ where: { id_code: id } });
+    if (!event) {
+      return res.status(404).json({ error: 'Not Found', message: 'Evento não encontrado' });
+    }
+
+    // Carregar usuário para obter id_code
+    const user = await User.findByPk(req.user.userId);
+    if (!user) {
+      return res.status(401).json({ error: 'Unauthorized', message: 'Usuário não encontrado' });
+    }
+
+    // Verifica duplicidade por (event_id, user_id)
+    const already = await EventResponse.findOne({ where: { event_id: event.id, user_id: user.id } });
+    if (already) {
+      return res.status(409).json({ error: 'Duplicate entry', message: 'Usuário já respondeu este evento' });
+    }
+
+    const t = await sequelize.transaction();
+    try {
+      // valida perguntas pertencem ao evento
+    const eventQuestions = await EventQuestion.findAll({
+      where: { event_id: event.id },
+      attributes: ['id', 'question_type', 'options', 'is_required', 'max_choices'],
+      transaction: t
+    });
+    const questionById = new Map(eventQuestions.map(q => [q.id, q]));
+
+    for (const ans of answers) {
+      const q = questionById.get(ans.question_id);
+      if (!q) {
+        throw Object.assign(new Error(`Pergunta ${ans.question_id} não pertence ao evento`), { statusCode: 400 });
+      }
+      if (ans.answer_text == null && ans.answer_json == null) {
+        throw Object.assign(new Error('Cada resposta deve ter answer_text ou answer_json'), { statusCode: 400 });
+      }
+
+      const rawOpts = Array.isArray(q.options) ? q.options : [];
+      const labels = rawOpts.map(o => (typeof o === 'string') ? o : (o && o.label)).filter(v => typeof v === 'string');
+      if (q.question_type === 'radio') {
+        const val = ans.answer_text;
+        if (typeof val !== 'string') {
+          throw Object.assign(new Error('Pergunta radio requer answer_text string'), { statusCode: 400 });
+        }
+        if (labels.length && !labels.includes(val)) {
+          throw Object.assign(new Error('Resposta não corresponde às opções disponíveis'), { statusCode: 400 });
+        }
+      } else if (q.question_type === 'checkbox') {
+        const arr = ans.answer_json;
+        if (!Array.isArray(arr)) {
+          throw Object.assign(new Error('Pergunta checkbox requer answer_json como array de strings'), { statusCode: 400 });
+        }
+        const unique = Array.from(new Set(arr));
+        if (q.is_required && unique.length === 0) {
+          throw Object.assign(new Error('Pergunta obrigatória requer ao menos uma seleção'), { statusCode: 400 });
+        }
+        if (typeof q.max_choices === 'number' && unique.length > q.max_choices) {
+          throw Object.assign(new Error(`Máximo de ${q.max_choices} seleções permitido`), { statusCode: 400 });
+        }
+        if (labels.length && !unique.every(v => typeof v === 'string' && labels.includes(v))) {
+          throw Object.assign(new Error('Alguma seleção não corresponde às opções disponíveis'), { statusCode: 400 });
+        }
+      }
+    }
+
+      const response = await EventResponse.create({
+        event_id: event.id,
+        user_id: user.id,
+        guest_code: user.id_code,
+        selfie_url: selfie_url || null
+      }, { transaction: t });
+
+      const toCreate = answers.map(a => ({
+        response_id: response.id,
+        question_id: a.question_id,
+        answer_text: a.answer_text || null,
+        answer_json: a.answer_json || null
+      }));
+
+      await EventAnswer.bulkCreate(toCreate, { transaction: t });
+
+      await t.commit();
+      return res.status(201).json({ success: true, response_id: response.id });
+    } catch (err) {
+      await t.rollback();
+      if (err.statusCode) {
+        return res.status(err.statusCode).json({ error: 'Validation error', message: err.message });
+      }
+      throw err;
+    }
+  } catch (error) {
+    console.error('Create event response (auth) error:', error);
+    return res.status(500).json({ error: 'Internal server error', message: 'Erro interno do servidor' });
+  }
+});
+
+/**
+ * @swagger
+ * /api/v1/events/{id}/responses:
+ *   patch:
+ *     summary: Continuar/atualizar respostas do evento (upsert por usuário)
+ *     tags: [Events]
+ *     security:
+ *       - bearerAuth: []
+ *     parameters:
+ *       - in: path
+ *         name: id
+ *         required: true
+ *         schema:
+ *           type: string
+ *           format: uuid
+ *         description: id_code do evento (UUID)
+ *     requestBody:
+ *       required: true
+ *       content:
+ *         application/json:
+ *           schema:
+ *             type: object
+ *             required: [answers]
+ *             properties:
+ *               selfie_url:
+ *                 type: string
+ *               answers:
+ *                 type: array
+ *                 items:
+ *                   type: object
+ *                   required: [question_id]
+ *                   properties:
+ *                     question_id:
+ *                       type: integer
+ *                     answer_text:
+ *                       type: string
+ *                     answer_json:
+ *                       type: object
+ *           example:
+ *             selfie_url: "https://example.com/selfies/user-42.jpg"
+ *             answers:
+ *               - question_id: 101
+ *                 answer_text: "IPA"
+ *               - question_id: 102
+ *                 answer_json: ["Pils", "Munich"]
+ *     responses:
+ *       200:
+ *         description: Respostas atualizadas com sucesso
+ *       404:
+ *         description: Evento não encontrado
+ */
+// PATCH /api/v1/events/:id/responses — upsert por user_id
+router.patch('/:id/responses', authenticateToken, [
+  body('selfie_url').optional().isURL().withMessage('selfie_url inválida'),
+  body('answers').isArray({ min: 1 }).withMessage('answers deve ser uma lista')
+], async (req, res) => {
+  const errors = validationResult(req);
+  if (!errors.isEmpty()) {
+    return res.status(400).json({ error: 'Validation error', details: errors.array() });
+  }
+
+  const { id } = req.params;
+  const { selfie_url, answers } = req.body;
+
+  try {
+    const event = await Event.findOne({ where: { id_code: id } });
+    if (!event) {
+      return res.status(404).json({ error: 'Not Found', message: 'Evento não encontrado' });
+    }
+
+    const user = await User.findByPk(req.user.userId);
+    if (!user) {
+      return res.status(401).json({ error: 'Unauthorized', message: 'Usuário não encontrado' });
+    }
+
+    const t = await sequelize.transaction();
+    try {
+      // Carregar perguntas do evento (todas, não apenas públicas)
+      const eventQuestions = await EventQuestion.findAll({
+        where: { event_id: event.id },
+        attributes: ['id', 'question_type', 'options', 'is_required', 'max_choices'],
+        transaction: t
+      });
+      const questionById = new Map(eventQuestions.map(q => [q.id, q]));
+
+      // Encontrar ou criar o response
+      let response = await EventResponse.findOne({ where: { event_id: event.id, user_id: user.id }, transaction: t });
+      if (!response) {
+        response = await EventResponse.create({
+          event_id: event.id,
+          user_id: user.id,
+          guest_code: user.id_code,
+          selfie_url: selfie_url || null
+        }, { transaction: t });
+      } else if (selfie_url) {
+        response.selfie_url = selfie_url;
+        await response.save({ transaction: t });
+      }
+
+      // Validar e upsert respostas
+      for (const ans of answers) {
+        const q = questionById.get(ans.question_id);
+        if (!q) {
+          throw Object.assign(new Error(`Pergunta ${ans.question_id} não pertence ao evento`), { statusCode: 400 });
+        }
+        if (ans.answer_text == null && ans.answer_json == null) {
+          throw Object.assign(new Error('Cada resposta deve ter answer_text ou answer_json'), { statusCode: 400 });
+        }
+
+        const rawOpts = Array.isArray(q.options) ? q.options : [];
+        const labels = rawOpts.map(o => (typeof o === 'string') ? o : (o && o.label)).filter(v => typeof v === 'string');
+        if (q.question_type === 'radio') {
+          const val = ans.answer_text;
+          if (typeof val !== 'string') {
+            throw Object.assign(new Error('Pergunta radio requer answer_text string'), { statusCode: 400 });
+          }
+          if (labels.length && !labels.includes(val)) {
+            throw Object.assign(new Error('Resposta não corresponde às opções disponíveis'), { statusCode: 400 });
+          }
+        } else if (q.question_type === 'checkbox') {
+          const arr = ans.answer_json;
+          if (!Array.isArray(arr)) {
+            throw Object.assign(new Error('Pergunta checkbox requer answer_json como array de strings'), { statusCode: 400 });
+          }
+          const unique = Array.from(new Set(arr));
+          if (q.is_required && unique.length === 0) {
+            throw Object.assign(new Error('Pergunta obrigatória requer ao menos uma seleção'), { statusCode: 400 });
+          }
+          if (typeof q.max_choices === 'number' && unique.length > q.max_choices) {
+            throw Object.assign(new Error(`Máximo de ${q.max_choices} seleções permitido`), { statusCode: 400 });
+          }
+          if (labels.length && !unique.every(v => typeof v === 'string' && labels.includes(v))) {
+            throw Object.assign(new Error('Alguma seleção não corresponde às opções disponíveis'), { statusCode: 400 });
+          }
+        }
+
+        const existing = await EventAnswer.findOne({
+          where: { response_id: response.id, question_id: ans.question_id },
+          transaction: t
+        });
+        if (existing) {
+          existing.answer_text = ans.answer_text || null;
+          existing.answer_json = ans.answer_json || null;
+          await existing.save({ transaction: t });
+        } else {
+          await EventAnswer.create({
+            response_id: response.id,
+            question_id: ans.question_id,
+            answer_text: ans.answer_text || null,
+            answer_json: ans.answer_json || null
+          }, { transaction: t });
+        }
+      }
+
+      await t.commit();
+      return res.json({ success: true, response_id: response.id });
+    } catch (err) {
+      await t.rollback();
+      if (err.statusCode) {
+        return res.status(err.statusCode).json({ error: 'Validation error', message: err.message });
+      }
+      throw err;
+    }
+  } catch (error) {
+    console.error('Upsert event response (admin) error:', error);
+    return res.status(500).json({ error: 'Internal server error', message: 'Erro interno do servidor' });
+  }
+});
+
+/**
+ * @swagger
+ * /api/v1/events/{id}/responses:
+ *   get:
+ *     summary: Listar respostas do evento (admin/master)
+ *     tags: [Events]
+ *     security:
+ *       - bearerAuth: []
+ *     parameters:
+ *       - in: path
+ *         name: id
+ *         required: true
+ *         schema:
+ *           type: string
+ *           format: uuid
+ *         description: id_code do evento (UUID)
+ *       - in: query
+ *         name: page
+ *         schema:
+ *           type: integer
+ *           minimum: 1
+ *       - in: query
+ *         name: limit
+ *         schema:
+ *           type: integer
+ *           minimum: 1
+ *           maximum: 100
+ *       - in: query
+ *         name: order
+ *         schema:
+ *           type: string
+ *           enum: [asc, desc]
+ *       - in: query
+ *         name: sort_by
+ *         schema:
+ *           type: string
+ *           enum: [submitted_at, guest_code]
+ *       - in: query
+ *         name: guest_code
+ *         schema:
+ *           type: string
+ *       - in: query
+ *         name: has_selfie
+ *         schema:
+ *           type: string
+ *           enum: [true, false]
+ *       - in: query
+ *         name: from
+ *         schema:
+ *           type: string
+ *           format: date-time
+ *       - in: query
+ *         name: to
+ *         schema:
+ *           type: string
+ *           format: date-time
+ *       - in: query
+ *         name: question_id
+ *         schema:
+ *           type: integer
+ *       - in: query
+ *         name: answer_contains
+ *         schema:
+ *           type: string
+ *     responses:
+ *       200:
+ *         description: Lista paginada de respostas (com dados de usuário e convidado)
+ *       403:
+ *         description: Acesso negado (somente master ou dono do evento)
+ *       404:
+ *         description: Evento não encontrado
+ */
+// GET /api/v1/events/:id/responses — listar respostas para datatables (admin/master)
+router.get('/:id/responses', authenticateToken, requireRole('admin', 'master'), async (req, res) => {
+  try {
+    const { id } = req.params;
+    const event = await Event.findOne({ where: { id_code: id } });
+    if (!event) {
+      return res.status(404).json({ error: 'Not Found', message: 'Evento não encontrado' });
+    }
+    // Apenas master ou dono do evento
+    if (req.user.role !== 'master' && event.created_by !== req.user.userId) {
+      return res.status(403).json({ error: 'Access denied', message: 'Acesso negado' });
+    }
+
+    // Query params
+    const page = Math.max(parseInt(req.query.page || '1', 10), 1);
+    const limit = Math.min(Math.max(parseInt(req.query.limit || '20', 10), 1), 100);
+    const order = (req.query.order || 'desc').toUpperCase() === 'ASC' ? 'ASC' : 'DESC';
+    const sortBy = ['submitted_at', 'guest_code'].includes(req.query.sort_by) ? req.query.sort_by : 'submitted_at';
+    const { guest_code, has_selfie, from, to } = req.query;
+    const questionId = req.query.question_id ? parseInt(req.query.question_id, 10) : undefined;
+    const answerContains = req.query.answer_contains;
+
+    // Base where
+    const where = { event_id: event.id };
+    if (guest_code) {
+      where.guest_code = { [Op.like]: `%${guest_code}%` };
+    }
+    if (typeof has_selfie !== 'undefined') {
+      if (String(has_selfie).toLowerCase() === 'true') {
+        where.selfie_url = { [Op.ne]: null };
+      } else if (String(has_selfie).toLowerCase() === 'false') {
+        where.selfie_url = { [Op.is]: null };
+      }
+    }
+    if (from || to) {
+      where.submitted_at = {};
+      if (from) where.submitted_at[Op.gte] = new Date(from);
+      if (to) where.submitted_at[Op.lte] = new Date(to);
+    }
+
+    // Include de respostas, opcionalmente com filtro por pergunta/resposta
+    const answersInclude = {
+      model: EventAnswer,
+      as: 'answers',
+      required: !!questionId || !!answerContains,
+      where: {}
+    };
+    if (questionId) {
+      answersInclude.where.question_id = questionId;
+    }
+    if (answerContains) {
+      answersInclude.where.answer_text = { [Op.like]: `%${answerContains}%` };
+    }
+    if (Object.keys(answersInclude.where).length === 0) {
+      delete answersInclude.where;
+      answersInclude.required = false;
+    }
+
+    const offset = (page - 1) * limit;
+    const { rows, count } = await EventResponse.findAndCountAll({
+      where,
+      include: [
+        answersInclude,
+        {
+          model: User,
+          as: 'user',
+          required: false,
+          attributes: ['id_code', 'name', 'email', 'phone', 'avatar_url'],
+          include: [
+            {
+              model: EventGuest,
+              as: 'eventGuests',
+              required: false,
+              where: { event_id: event.id },
+              attributes: ['guest_name', 'guest_email', 'guest_phone', 'type', 'check_in_at', 'source', 'check_in_method']
+            }
+          ]
+        }
+      ],
+      order: [[sortBy, order]],
+      offset,
+      limit,
+      distinct: true
+    });
+
+    const data = rows.map(r => {
+      const answersObj = {};
+      (r.answers || []).forEach(a => {
+        const key = `q${a.question_id}`;
+        answersObj[key] = a.answer_text != null ? a.answer_text : a.answer_json;
+      });
+      const user = r.user ? {
+        id_code: r.user.id_code,
+        name: r.user.name,
+        email: r.user.email,
+        phone: r.user.phone,
+        avatar_url: r.user.avatar_url
+      } : null;
+      const guestFromEvent = r.user && Array.isArray(r.user.eventGuests) && r.user.eventGuests.length > 0
+        ? r.user.eventGuests[0]
+        : null;
+      const guest = guestFromEvent ? {
+        guest_name: guestFromEvent.guest_name,
+        guest_email: guestFromEvent.guest_email,
+        guest_phone: guestFromEvent.guest_phone,
+        type: guestFromEvent.type,
+        check_in_at: guestFromEvent.check_in_at,
+        source: guestFromEvent.source,
+        check_in_method: guestFromEvent.check_in_method
+      } : null;
+      return {
+        guest_code: r.guest_code,
+        selfie_url: r.selfie_url,
+        submitted_at: r.submitted_at,
+        answers: answersObj,
+        user,
+        guest
+      };
+    });
+
+    return res.json({
+      success: true,
+      data,
+      meta: {
+        total: count,
+        page,
+        limit,
+        pages: Math.ceil(count / limit)
+      }
+    });
+  } catch (error) {
+    console.error('List event responses (admin) error:', error);
+    return res.status(500).json({ error: 'Internal server error', message: 'Erro interno do servidor' });
+  }
+});
+
+/**
+ * @swagger
+ * /api/v1/events/{id}/responses/export:
+ *   get:
+ *     summary: Exportar respostas em CSV (admin/master)
+ *     tags: [Events]
+ *     security:
+ *       - bearerAuth: []
+ *     parameters:
+ *       - in: path
+ *         name: id
+ *         required: true
+ *         schema:
+ *           type: string
+ *           format: uuid
+ *         description: id_code do evento (UUID)
+ *     responses:
+ *       200:
+ *         description: CSV com respostas do evento
+ *       403:
+ *         description: Acesso negado (somente master ou dono do evento)
+ *       404:
+ *         description: Evento não encontrado
+ */
+// GET /api/v1/events/:id/responses/export — CSV das respostas do evento (admin/master)
+router.get('/:id/responses/export', authenticateToken, requireRole('admin', 'master'), async (req, res) => {
+  try {
+    const { id } = req.params;
+    const event = await Event.findOne({ where: { id_code: id }, include: [{ model: EventQuestion, as: 'questions', order: [['order_index', 'ASC']] }] });
+    if (!event) {
+      return res.status(404).json({ error: 'Not Found', message: 'Evento não encontrado' });
+    }
+    // Apenas master ou dono do evento
+    if (req.user.role !== 'master' && event.created_by !== req.user.userId) {
+      return res.status(403).json({ error: 'Access denied', message: 'Acesso negado' });
+    }
+
+    const responses = await EventResponse.findAll({
+      where: { event_id: event.id },
+      include: [{ model: EventAnswer, as: 'answers' }],
+      order: [['submitted_at', 'DESC']]
+    });
+
+    const questionFields = (event.questions || []).map(q => ({
+      id: q.id,
+      header: `Q${q.id} - ${q.question_text}`
+    }));
+
+    const rows = responses.map(r => {
+      const base = {
+        guest_code: r.guest_code,
+        selfie_url: r.selfie_url || '',
+        submitted_at: r.submitted_at
+      };
+      for (const qf of questionFields) {
+        const ans = (r.answers || []).find(a => a.question_id === qf.id);
+        base[qf.header] = ans ? (ans.answer_text != null ? ans.answer_text : JSON.stringify(ans.answer_json)) : '';
+      }
+      return base;
+    });
+
+    const { Parser } = require('json2csv');
+    const fields = ['guest_code', 'selfie_url', 'submitted_at', ...questionFields.map(q => q.header)];
+    const parser = new Parser({ fields });
+    const csv = parser.parse(rows);
+
+    res.setHeader('Content-Type', 'text/csv');
+    res.setHeader('Content-Disposition', `attachment; filename="event_${event.id}_responses.csv"`);
+    return res.status(200).send(csv);
+  } catch (error) {
+    console.error('Export responses CSV (admin) error:', error);
+    return res.status(500).json({ error: 'Internal server error', message: 'Erro interno do servidor' });
+  }
+});
