@@ -20,7 +20,7 @@ const EventQuestion = sequelize.define('EventQuestion', {
     allowNull: false
   },
   question_type: {
-    type: DataTypes.ENUM('text', 'textarea', 'radio', 'checkbox', 'rating', 'music_preference'),
+    type: DataTypes.ENUM('text', 'textarea', 'radio', 'checkbox', 'rating', 'music_preference', 'auto_checkin'),
     allowNull: false,
     defaultValue: 'text'
   },

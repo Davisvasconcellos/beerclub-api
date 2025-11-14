@@ -119,9 +119,30 @@ const Store = sequelize.define('Store', {
   updatedAt: false,
   hooks: {
     beforeCreate: (store) => { // O hook beforeCreate garante que toda nova loja terá um id_code
+      // Normalizar email
+      if (store.email && typeof store.email === 'string') {
+        store.email = store.email.trim().toLowerCase();
+      }
       store.id_code = uuidv4();
     }
   }
 });
 
-module.exports = Store; 
+// Suporte a operações em lote
+Store.addHook('beforeBulkCreate', (instances) => {
+  if (Array.isArray(instances)) {
+    for (const inst of instances) {
+      if (inst.email && typeof inst.email === 'string') {
+        inst.email = inst.email.trim().toLowerCase();
+      }
+    }
+  }
+});
+
+Store.addHook('beforeBulkUpdate', (options) => {
+  if (options && options.attributes && typeof options.attributes.email === 'string') {
+    options.attributes.email = options.attributes.email.trim().toLowerCase();
+  }
+});
+
+module.exports = Store;

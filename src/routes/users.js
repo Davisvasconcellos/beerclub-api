@@ -328,6 +328,45 @@ router.put('/me', authenticateToken, [
   }
 });
 
+// Atualização parcial do próprio usuário (PATCH) — focado em avatar/selfie
+router.patch('/me', authenticateToken, [
+  body('avatar_url')
+    .optional({ nullable: true })
+    .customSanitizer(value => (value === '' ? null : value))
+    .isString().withMessage('O caminho do avatar deve ser uma string válida.')
+], async (req, res) => {
+  try {
+    const errors = validationResult(req);
+    if (!errors.isEmpty()) {
+      return res.status(400).json({ error: 'Validation error', message: 'Dados inválidos', details: errors.array() });
+    }
+
+    const user = await User.findByPk(req.user.userId);
+    if (!user) {
+      return res.status(404).json({ error: 'User not found', message: 'Usuário não encontrado.' });
+    }
+
+    const updateData = {};
+    if (req.body.avatar_url !== undefined) {
+      updateData.avatar_url = req.body.avatar_url;
+    }
+
+    await user.update(updateData);
+
+    await user.reload({
+      include: [
+        { model: Plan, as: 'plan', attributes: ['id', 'name', 'description', 'price'] },
+        { model: FootballTeam, as: 'team', attributes: ['name', 'short_name', 'abbreviation', 'shield'] }
+      ]
+    });
+
+    res.json({ success: true, message: 'Seu perfil foi atualizado com sucesso.', data: { user: user.toJSON() } });
+  } catch (error) {
+    console.error('Patch self error:', error);
+    res.status(500).json({ error: 'Internal server error', message: 'Erro interno do servidor' });
+  }
+});
+
 // Atualizar usuário
 router.put('/:id_code', authenticateToken, requireRole('admin'), [
   body('name').optional().isLength({ min: 2, max: 255 }).trim(),

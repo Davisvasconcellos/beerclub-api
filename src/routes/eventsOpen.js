@@ -1,8 +1,9 @@
 const express = require('express');
 const { body, validationResult } = require('express-validator');
-const { Op } = require('sequelize');
+const { Op, fn, col } = require('sequelize');
 const { sequelize } = require('../config/database');
 const { Event, EventQuestion, EventResponse, EventAnswer, User, EventGuest, TokenBlocklist } = require('../models');
+const { authenticateToken } = require('../middlewares/auth');
 const jwt = require('jsonwebtoken');
 const admin = require('firebase-admin');
 
@@ -188,7 +189,7 @@ router.get('/public', async (req, res) => {
     const total = await Event.count({ where });
     const rows = await Event.findAll({
       where,
-      attributes: ['id', 'id_code', 'name', 'slug', 'banner_url', 'start_datetime', 'end_datetime', 'public_url', 'gallery_url', 'place', 'description', 'color_1', 'color_2', 'card_background', 'created_at'],
+      attributes: ['id', 'id_code', 'name', 'slug', 'banner_url', 'start_datetime', 'end_datetime', 'public_url', 'gallery_url', 'place', 'description', 'created_at'],
       order: [[sortBy, order]],
       offset,
       limit
@@ -206,6 +207,223 @@ router.get('/public', async (req, res) => {
     });
   } catch (error) {
     console.error('Public list events error:', error);
+    return res.status(500).json({ error: 'Internal server error', message: 'Erro interno do servidor' });
+  }
+});
+
+// GET /api/events/:id/detail - informações públicas completas do evento para o front-end (v1)
+router.get('/:id/detail', async (req, res) => {
+  try {
+    const { id } = req.params;
+    const event = await Event.findOne({ where: { id_code: id } });
+    if (!event) {
+      return res.status(404).json({ error: 'Not Found', message: 'Evento não encontrado' });
+    }
+
+    const payload = {
+      id: event.id,
+      id_code: event.id_code,
+      name: event.name,
+      slug: event.slug,
+      description: event.description,
+      banner_url: event.banner_url,
+      public_url: event.public_url,
+      gallery_url: event.gallery_url,
+      place: event.place,
+      start_datetime: event.start_datetime,
+      end_datetime: event.end_datetime,
+      requires_auto_checkin: !!event.requires_auto_checkin,
+      auto_checkin_flow_quest: !!event.auto_checkin_flow_quest,
+      checkin_component_config: event.checkin_component_config || null
+    };
+
+    return res.json({ success: true, data: payload });
+  } catch (error) {
+    console.error('Get event detail error:', error);
+    return res.status(500).json({ error: 'Internal server error', message: 'Erro interno do servidor' });
+  }
+});
+
+// GET /api/events/:id - alias público para detalhes do evento por id_code (v1)
+router.get('/:id', async (req, res) => {
+  try {
+    const { id } = req.params;
+    const event = await Event.findOne({ where: { id_code: id } });
+    if (!event) {
+      return res.status(404).json({ error: 'Not Found', message: 'Evento não encontrado' });
+    }
+
+    const payload = {
+      id: event.id,
+      id_code: event.id_code,
+      name: event.name,
+      slug: event.slug,
+      description: event.description,
+      banner_url: event.banner_url,
+      public_url: event.public_url,
+      gallery_url: event.gallery_url,
+      place: event.place,
+      start_datetime: event.start_datetime,
+      end_datetime: event.end_datetime,
+      requires_auto_checkin: !!event.requires_auto_checkin,
+      auto_checkin_flow_quest: !!event.auto_checkin_flow_quest,
+      checkin_component_config: event.checkin_component_config || null
+    };
+
+    return res.json({ success: true, data: payload });
+  } catch (error) {
+    console.error('Get event public detail alias error:', error);
+    return res.status(500).json({ error: 'Internal server error', message: 'Erro interno do servidor' });
+  }
+});
+
+// GET /api/events/:id/guest/me - status de check-in do usuário autenticado
+router.get('/:id/guest/me', authenticateToken, async (req, res) => {
+  try {
+    const { id } = req.params;
+    const event = await Event.findOne({ where: { id_code: id } });
+    if (!event) {
+      return res.status(404).json({ error: 'Not Found', message: 'Evento não encontrado' });
+    }
+
+    const userId = req.user.userId;
+    const user = await User.findByPk(userId);
+    if (!user) {
+      return res.status(401).json({ error: 'Unauthorized', message: 'Usuário não encontrado' });
+    }
+
+    let guest = await EventGuest.findOne({ where: { event_id: event.id, user_id: userId } });
+    if (!guest && user.email) {
+      const lowerEmail = user.email.toLowerCase();
+      guest = await EventGuest.findOne({
+        where: {
+          event_id: event.id,
+          [Op.and]: [sequelize.where(fn('LOWER', col('guest_email')), lowerEmail)]
+        }
+      });
+    }
+
+    if (!guest) {
+      return res.status(404).json({ error: 'Not Found', message: 'Convidado não encontrado para este evento' });
+    }
+
+    const response = await EventResponse.findOne({ where: { event_id: event.id, user_id: userId } });
+    const selfieUrl = response?.selfie_url || null;
+
+    return res.json({
+      success: true,
+      data: {
+        guest_id: guest.id,
+        checked_in: !!guest.check_in_at,
+        checkin_at: guest.check_in_at,
+        selfie_url: selfieUrl
+      }
+    });
+  } catch (error) {
+    console.error('Get my guest status error:', error);
+    return res.status(500).json({ error: 'Internal server error', message: 'Erro interno do servidor' });
+  }
+});
+
+// POST /api/events/:id/checkin - efetiva check-in para usuário autenticado (idempotente)
+router.post('/:id/checkin', authenticateToken, [
+  body('name').isLength({ min: 1 }).withMessage('name é obrigatório'),
+  body('email').isEmail().withMessage('email inválido'),
+  body('selfie_url').optional().isURL({ require_tld: false }).withMessage('selfie_url inválida')
+], async (req, res) => {
+  try {
+    const errors = validationResult(req);
+    if (!errors.isEmpty()) {
+      return res.status(400).json({ error: 'Validation error', message: 'Dados inválidos', details: errors.array() });
+    }
+
+    const { id } = req.params;
+    const event = await Event.findOne({ where: { id_code: id } });
+    if (!event) {
+      return res.status(404).json({ error: 'Not Found', message: 'Evento não encontrado' });
+    }
+
+    const userId = req.user.userId;
+    const user = await User.findByPk(userId);
+    if (!user) {
+      return res.status(401).json({ error: 'Unauthorized', message: 'Usuário não encontrado' });
+    }
+
+    const { name, email, selfie_url } = req.body;
+
+    // Busca convidado por user_id e fallback por email normalizado
+    let guest = await EventGuest.findOne({ where: { event_id: event.id, user_id: userId } });
+    if (!guest) {
+      const lowerEmail = (email || user.email || '').toLowerCase();
+      if (lowerEmail) {
+        guest = await EventGuest.findOne({
+          where: {
+            event_id: event.id,
+            [Op.and]: [sequelize.where(fn('LOWER', col('guest_email')), lowerEmail)]
+          }
+        });
+      }
+    }
+
+    if (guest) {
+      const updatePayload = {
+        user_id: guest.user_id || userId,
+        guest_name: name || guest.guest_name || user.name,
+        guest_email: email || guest.guest_email || user.email,
+        check_in_method: 'auto_checkin',
+        authorized_by_user_id: null
+      };
+      if (!guest.check_in_at) {
+        updatePayload.check_in_at = new Date();
+      }
+      await guest.update(updatePayload);
+    } else {
+      guest = await EventGuest.create({
+        event_id: event.id,
+        user_id: userId,
+        guest_name: name || user.name,
+        guest_email: email || user.email,
+        guest_phone: user.phone || null,
+        guest_document_type: null,
+        guest_document_number: null,
+        type: 'normal',
+        source: 'invited',
+        rsvp_confirmed: false,
+        rsvp_at: null,
+        invited_at: new Date(),
+        invited_by_user_id: null,
+        check_in_at: new Date(),
+        check_in_method: 'auto_checkin',
+        authorized_by_user_id: null
+      });
+    }
+
+    // Atualiza/insere EventResponse para armazenar selfie
+    if (selfie_url) {
+      let response = await EventResponse.findOne({ where: { event_id: event.id, user_id: userId } });
+      if (!response) {
+        response = await EventResponse.create({
+          event_id: event.id,
+          user_id: userId,
+          guest_code: (Math.random().toString(36).slice(2, 10)).toUpperCase(),
+          selfie_url,
+          submitted_at: new Date()
+        });
+      } else {
+        await response.update({ selfie_url });
+      }
+    }
+
+    return res.json({
+      success: true,
+      data: {
+        guest_id: guest.id,
+        checked_in: !!guest.check_in_at,
+        checkin_at: guest.check_in_at
+      }
+    });
+  } catch (error) {
+    console.error('Check-in error:', error);
     return res.status(500).json({ error: 'Internal server error', message: 'Erro interno do servidor' });
   }
 });
@@ -280,9 +498,6 @@ router.get('/public/:slug', async (req, res) => {
       place: event.place,
       start_datetime: event.start_datetime,
       end_datetime: event.end_datetime,
-      color_1: event.color_1,
-      color_2: event.color_2,
-      card_background: event.card_background,
       questions: (event.questions || []).map(q => ({
         id: q.id,
         text: q.question_text,
@@ -533,6 +748,8 @@ router.post('/:id/responses', [
  *               data:
  *                 event_id: 42
  *                 id_code: "UUID-DO-EVENTO"
+ *                 auto_checkin: true
+ *                 checked_in: false
  *                 total_questions: 3
  *                 questions:
  *                   - id: 101
@@ -701,11 +918,38 @@ router.get('/:id/questions-with-answers', async (req, res) => {
       };
     });
 
+    // Determina se usuário já está com check-in
+    let checked_in = false;
+    if (isAuthenticated) {
+      const guestForUser = await EventGuest.findOne({ where: { event_id: event.id, user_id: authUserId } });
+      if (guestForUser && guestForUser.check_in_at) {
+        checked_in = true;
+      } else {
+        // fallback por email quando não há vínculo por user_id
+        if (user && user.email) {
+          const lowerEmail = user.email.toLowerCase();
+          const guestByEmail = await EventGuest.findOne({
+            where: {
+              event_id: event.id,
+              [Op.and]: [
+                sequelize.where(fn('LOWER', col('guest_email')), lowerEmail)
+              ]
+            }
+          });
+          if (guestByEmail && guestByEmail.check_in_at) {
+            checked_in = true;
+          }
+        }
+      }
+    }
+
     return res.json({
       success: true,
       data: {
         event_id: event.id,
         id_code: event.id_code,
+        auto_checkin: !!event.auto_checkin,
+        checked_in,
         total_questions: payloadQuestions.length,
         questions: payloadQuestions
       }
@@ -750,6 +994,8 @@ router.get('/:id/questions-with-answers', async (req, res) => {
  *               data:
  *                 event_id: 123
  *                 id_code: "uuid-do-evento"
+  *                 auto_checkin: true
+  *                 checked_in: false
  *                 total_questions: 7
  *                 questions:
  *                   - id: 10
@@ -1192,17 +1438,16 @@ router.post('/:id/checkin/google', [
     // Verifica se já existe convidado vinculado ao usuário
     let guest = await EventGuest.findOne({ where: { event_id: event.id, user_id: user.id } });
     if (guest) {
-      if (guest.check_in_at) {
-        return res.status(409).json({ error: 'Already checked in', message: 'Convidado já realizou check-in' });
+      if (!guest.check_in_at) {
+        await guest.update({
+          guest_name: guest.guest_name || user.name,
+          guest_email: guest.guest_email || user.email,
+          check_in_at: new Date(),
+          check_in_method: 'google',
+          source: 'walk_in',
+          authorized_by_user_id: null
+        });
       }
-      await guest.update({
-        guest_name: guest.guest_name || user.name,
-        guest_email: guest.guest_email || user.email,
-        check_in_at: new Date(),
-        check_in_method: 'google_login',
-        source: 'walk_in',
-        authorized_by_user_id: null
-      });
     } else {
       guest = await EventGuest.create({
         event_id: event.id,
@@ -1219,7 +1464,7 @@ router.post('/:id/checkin/google', [
         invited_at: new Date(),
         invited_by_user_id: null,
         check_in_at: new Date(),
-        check_in_method: 'google_login',
+        check_in_method: 'google',
         authorized_by_user_id: null
       });
     }
@@ -1227,6 +1472,164 @@ router.post('/:id/checkin/google', [
     return res.json({ success: true, data: { guest } });
   } catch (error) {
     console.error('Public Google check-in error:', error);
+    return res.status(500).json({ error: 'Internal server error', message: 'Erro interno do servidor' });
+  }
+});
+
+/**
+ * @swagger
+ * /api/events/{id}/auto-checkin:
+ *   post:
+ *     summary: Auto check-in (evento com auto_checkin=true) usando usuário autenticado
+ *     tags: [Events Public]
+ *     parameters:
+ *       - in: path
+ *         name: id
+ *         required: true
+ *         schema:
+ *           type: string
+ *           format: uuid
+ *         description: id_code do evento (UUID)
+ *     security:
+ *       - bearerAuth: []
+ *     requestBody:
+ *       required: true
+ *       content:
+ *         application/json:
+ *           schema:
+ *             type: object
+ *             required: [name, email]
+ *             properties:
+ *               name:
+ *                 type: string
+ *               email:
+ *                 type: string
+ *                 format: email
+ *               selfie_url:
+ *                 type: string
+ *                 format: uri
+ *     responses:
+ *       200:
+ *         description: Check-in realizado/atualizado com sucesso
+ *       400:
+ *         description: Erro de validação
+ *       401:
+ *         description: Token inválido
+ *       404:
+ *         description: Evento não encontrado
+ */
+router.post('/:id/auto-checkin', [
+  body('name').isLength({ min: 1 }).withMessage('name é obrigatório'),
+  body('email').isEmail().withMessage('email inválido'),
+  body('selfie_url').optional().isURL().withMessage('selfie_url inválida')
+  ], async (req, res) => {
+  try {
+    const errors = validationResult(req);
+    if (!errors.isEmpty()) {
+      return res.status(400).json({ error: 'Validation error', message: 'Dados inválidos', details: errors.array() });
+    }
+
+    // Requer Authorization
+    const authHeader = req.headers['authorization'];
+    const token = authHeader && authHeader.split(' ')[1];
+    if (!token) {
+      return res.status(401).json({ error: 'Unauthorized', message: 'Bearer token é obrigatório' });
+    }
+    const isBlocked = await TokenBlocklist.findByPk(token);
+    if (isBlocked) {
+      return res.status(401).json({ message: 'Token inválido' });
+    }
+    let decoded;
+    try {
+      decoded = jwt.verify(token, process.env.JWT_SECRET);
+    } catch (err) {
+      return res.status(401).json({ error: 'Unauthorized', message: 'Token inválido ou expirado' });
+    }
+
+    const user = await User.findByPk(decoded.userId);
+    if (!user) {
+      return res.status(401).json({ error: 'Unauthorized', message: 'Usuário não encontrado' });
+    }
+
+    const { id } = req.params;
+    const event = await Event.findOne({ where: { id_code: id } });
+    if (!event) {
+      return res.status(404).json({ error: 'Not Found', message: 'Evento não encontrado' });
+    }
+
+    // Se o evento não exige auto_checkin, ainda permitimos operação para consolidar dados
+    const { name, email, selfie_url } = req.body;
+
+    // Tenta localizar convidado pelo user_id; se não achar, tenta por email
+    let guest = await EventGuest.findOne({ where: { event_id: event.id, user_id: user.id } });
+    if (!guest) {
+      const lowerEmail = (email || user.email || '').toLowerCase();
+      if (lowerEmail) {
+        guest = await EventGuest.findOne({
+          where: {
+            event_id: event.id,
+            [Op.and]: [
+              // comparação case-insensitive
+              sequelize.where(fn('LOWER', col('guest_email')), lowerEmail)
+            ]
+          }
+        });
+      }
+    }
+
+    if (guest) {
+      const updatePayload = {
+        user_id: guest.user_id || user.id,
+        guest_name: name || guest.guest_name || user.name,
+        guest_email: email || guest.guest_email || user.email,
+        check_in_method: 'auto_checkin',
+        authorized_by_user_id: null
+      };
+      if (!guest.check_in_at) {
+        updatePayload.check_in_at = new Date();
+      }
+      await guest.update(updatePayload);
+    } else {
+      // Se não há vínculo, cria novo convidado normal já com check-in (auto_checkin)
+      guest = await EventGuest.create({
+        event_id: event.id,
+        user_id: user.id,
+        guest_name: name || user.name,
+        guest_email: email || user.email,
+        guest_phone: user.phone || null,
+        guest_document_type: null,
+        guest_document_number: null,
+        type: 'normal',
+        source: 'invited',
+        rsvp_confirmed: false,
+        rsvp_at: null,
+        invited_at: new Date(),
+        invited_by_user_id: null,
+        check_in_at: new Date(),
+        check_in_method: 'auto_checkin',
+        authorized_by_user_id: null
+      });
+    }
+
+    // Atualiza/insere EventResponse para armazenar selfie
+    if (selfie_url) {
+      let response = await EventResponse.findOne({ where: { event_id: event.id, user_id: user.id } });
+      if (!response) {
+        response = await EventResponse.create({
+          event_id: event.id,
+          user_id: user.id,
+          guest_code: (Math.random().toString(36).slice(2, 10)).toUpperCase(),
+          selfie_url,
+          submitted_at: new Date()
+        });
+      } else {
+        await response.update({ selfie_url });
+      }
+    }
+
+    return res.json({ success: true, data: { guest } });
+  } catch (error) {
+    console.error('Auto-checkin (public) error:', error);
     return res.status(500).json({ error: 'Internal server error', message: 'Erro interno do servidor' });
   }
 });

@@ -136,6 +136,10 @@ const User = sequelize.define('User', {
   updatedAt: false,
   hooks: {
     beforeCreate: async (user) => {
+      // Normalizar email
+      if (user.email && typeof user.email === 'string') {
+        user.email = user.email.trim().toLowerCase();
+      }
       if (user.password_hash) {
         user.password_hash = await bcrypt.hash(user.password_hash, 12);
       }
@@ -143,11 +147,32 @@ const User = sequelize.define('User', {
       user.id_code = uuidv4();
     },
     beforeUpdate: async (user) => {
+      // Normalizar email
+      if (user.email && typeof user.email === 'string') {
+        user.email = user.email.trim().toLowerCase();
+      }
       if (user.changed('password_hash')) {
         user.password_hash = await bcrypt.hash(user.password_hash, 12);
       }
     },
     // Removido afterCreate para evitar update adicional e padronizar com Store (UUID v4)
+  }
+});
+
+// Suporte a operações em lote
+User.addHook('beforeBulkCreate', (instances) => {
+  if (Array.isArray(instances)) {
+    for (const inst of instances) {
+      if (inst.email && typeof inst.email === 'string') {
+        inst.email = inst.email.trim().toLowerCase();
+      }
+    }
+  }
+});
+
+User.addHook('beforeBulkUpdate', (options) => {
+  if (options && options.attributes && typeof options.attributes.email === 'string') {
+    options.attributes.email = options.attributes.email.trim().toLowerCase();
   }
 });
 

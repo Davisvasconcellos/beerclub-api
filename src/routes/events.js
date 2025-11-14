@@ -64,6 +64,9 @@ function formatDuplicateError(error) {
  *                 type: integer
  *                 enum: [0, 1]
  *                 description: "Preferência de fundo do cartão: 0=cores (degradê), 1=imagem"
+ *               auto_checkin:
+ *                 type: boolean
+ *                 description: "Quando verdadeiro, o fluxo solicita auto check-in antes das perguntas"
  *               description:
  *                 type: string
  *               public_url:
@@ -100,7 +103,7 @@ function formatDuplicateError(error) {
  *                       type: string
  *                     type:
  *                       type: string
- *                       enum: [text, textarea, radio, checkbox, rating, music_preference]
+*                       enum: [text, textarea, radio, checkbox, rating, music_preference, auto_checkin]
  *                     options:
  *                       type: array
  *                       items:
@@ -172,6 +175,10 @@ router.post('/', authenticateToken, requireRole('admin', 'master'), [
   body('card_background_type').optional().isInt({ min: 0, max: 1 }),
   body('start_datetime').isISO8601().toDate().withMessage('start_datetime é obrigatório e deve ser uma data válida.'),
   body('end_datetime').isISO8601().toDate().withMessage('end_datetime é obrigatório e deve ser uma data válida.'),
+  body('auto_checkin').optional().isBoolean(),
+  body('requires_auto_checkin').optional().isBoolean(),
+  body('auto_checkin_flow_quest').optional().isBoolean(),
+  body('checkin_component_config').optional(),
   body('questions').optional().isArray()
 ], async (req, res) => {
   const errors = validationResult(req);
@@ -196,6 +203,10 @@ router.post('/', authenticateToken, requireRole('admin', 'master'), [
     color_2,
     card_background,
     card_background_type,
+    auto_checkin,
+    requires_auto_checkin,
+    auto_checkin_flow_quest,
+    checkin_component_config,
     questions = []
   } = req.body;
   const creatorId = req.user.userId;
@@ -236,6 +247,10 @@ router.post('/', authenticateToken, requireRole('admin', 'master'), [
         color_2,
         card_background,
         card_background_type: inferredType,
+        auto_checkin: !!auto_checkin,
+        requires_auto_checkin: !!requires_auto_checkin,
+        auto_checkin_flow_quest: !!auto_checkin_flow_quest,
+        checkin_component_config: checkin_component_config || null,
         created_by: creatorId
       }, { transaction: t });
 
@@ -571,7 +586,11 @@ router.patch('/:id', authenticateToken, requireRole('admin', 'master'), [
   body('card_background').optional().isString(),
   body('card_background_type').optional().isInt({ min: 0, max: 1 }),
   body('start_datetime').optional().isISO8601().toDate().withMessage('start_datetime deve ser uma data válida'),
-  body('end_datetime').optional().isISO8601().toDate().withMessage('end_datetime deve ser uma data válida')
+  body('end_datetime').optional().isISO8601().toDate().withMessage('end_datetime deve ser uma data válida'),
+  body('auto_checkin').optional().isBoolean(),
+  body('requires_auto_checkin').optional().isBoolean(),
+  body('auto_checkin_flow_quest').optional().isBoolean(),
+  body('checkin_component_config').optional()
 ], async (req, res) => {
   const errors = validationResult(req);
   if (!errors.isEmpty()) {
@@ -589,7 +608,7 @@ router.patch('/:id', authenticateToken, requireRole('admin', 'master'), [
       return res.status(403).json({ error: 'Access denied', message: 'Acesso negado' });
     }
 
-    const allowed = ['name', 'slug', 'banner_url', 'description', 'public_url', 'gallery_url', 'place', 'resp_email', 'resp_name', 'resp_phone', 'color_1', 'color_2', 'card_background', 'card_background_type', 'start_datetime', 'end_datetime'];
+    const allowed = ['name', 'slug', 'banner_url', 'description', 'public_url', 'gallery_url', 'place', 'resp_email', 'resp_name', 'resp_phone', 'color_1', 'color_2', 'card_background', 'card_background_type', 'start_datetime', 'end_datetime', 'auto_checkin', 'requires_auto_checkin', 'auto_checkin_flow_quest', 'checkin_component_config'];
     const updateData = {};
     for (const key of allowed) {
       if (req.body[key] !== undefined) updateData[key] = req.body[key];
@@ -1051,7 +1070,7 @@ router.get('/:id/stats', authenticateToken, requireRole('admin', 'master'), asyn
  *                 type: string
  *               type:
  *                 type: string
- *                 enum: [text, textarea, radio, checkbox, rating, music_preference]
+*                 enum: [text, textarea, radio, checkbox, rating, music_preference, auto_checkin]
  *               options:
  *                 type: array
  *                 items:
@@ -1097,7 +1116,7 @@ router.get('/:id/stats', authenticateToken, requireRole('admin', 'master'), asyn
  */
 router.post('/:id/questions', authenticateToken, requireRole('admin', 'master'), [
   body('text').isLength({ min: 1 }).withMessage('text é obrigatório'),
-  body('type').isIn(['text', 'textarea', 'radio', 'checkbox', 'rating', 'music_preference']).withMessage('type inválido'),
+  body('type').isIn(['text', 'textarea', 'radio', 'checkbox', 'rating', 'music_preference', 'auto_checkin']).withMessage('type inválido'),
   body('options').optional(),
   body('max_choices').optional().isInt({ min: 1 }).withMessage('max_choices deve ser inteiro >= 1'),
   body('correct_option_index').optional().isInt({ min: 0 }).withMessage('correct_option_index deve ser inteiro >= 0'),
@@ -1215,7 +1234,7 @@ router.post('/:id/questions', authenticateToken, requireRole('admin', 'master'),
  *                 type: string
  *               type:
  *                 type: string
- *                 enum: [text, textarea, radio, checkbox, rating, music_preference]
+*                 enum: [text, textarea, radio, checkbox, rating, music_preference, auto_checkin]
  *               options:
  *                 type: array
  *                 items:
@@ -1255,7 +1274,7 @@ router.post('/:id/questions', authenticateToken, requireRole('admin', 'master'),
  */
 router.patch('/:id/questions/:questionId', authenticateToken, requireRole('admin', 'master'), [
   body('text').optional().isLength({ min: 1 }),
-  body('type').optional().isIn(['text', 'textarea', 'radio', 'checkbox', 'rating', 'music_preference']),
+  body('type').optional().isIn(['text', 'textarea', 'radio', 'checkbox', 'rating', 'music_preference', 'auto_checkin']),
   body('options').optional(),
   body('max_choices').optional().isInt({ min: 1 }),
   body('correct_option_index').optional().isInt({ min: 0 }),
@@ -1616,7 +1635,7 @@ router.patch('/:id/guests/:guestId', authenticateToken, requireRole('admin', 'ma
   body('rsvp_confirmed').optional().isBoolean(),
   body('rsvp_at').optional({ nullable: true }).isISO8601().toDate(),
   body('check_in_at').optional({ nullable: true }).isISO8601().toDate(),
-  body('check_in_method').optional().isIn(['google', 'staff_manual', 'invited_qr']),
+  body('check_in_method').optional().isIn(['google', 'staff_manual', 'invited_qr', 'auto_checkin']),
   body('authorized_by_user_id').optional().isInt()
 ], async (req, res) => {
   try {

@@ -85,6 +85,25 @@ const Event = sequelize.define('Event', {
   card_background_type: {
     type: DataTypes.TINYINT, // 0 = cores (gradient), 1 = imagem
     allowNull: true
+  },
+  auto_checkin: {
+    type: DataTypes.BOOLEAN,
+    allowNull: false,
+    defaultValue: false
+  },
+  requires_auto_checkin: {
+    type: DataTypes.BOOLEAN,
+    allowNull: false,
+    defaultValue: false
+  },
+  auto_checkin_flow_quest: {
+    type: DataTypes.BOOLEAN,
+    allowNull: false,
+    defaultValue: false
+  },
+  checkin_component_config: {
+    type: DataTypes.JSON,
+    allowNull: true
   }
 }, {
   tableName: 'events',
@@ -98,7 +117,34 @@ const Event = sequelize.define('Event', {
       if (!event.id_code) {
         event.id_code = uuidv4();
       }
+      // Normalizar resp_email
+      if (event.resp_email && typeof event.resp_email === 'string') {
+        event.resp_email = event.resp_email.trim().toLowerCase();
+      }
+    },
+    beforeUpdate: (event) => {
+      // Normalizar resp_email
+      if (event.resp_email && typeof event.resp_email === 'string') {
+        event.resp_email = event.resp_email.trim().toLowerCase();
+      }
     }
+  }
+});
+
+// Suporte a operações em lote
+Event.addHook('beforeBulkCreate', (instances) => {
+  if (Array.isArray(instances)) {
+    for (const inst of instances) {
+      if (inst.resp_email && typeof inst.resp_email === 'string') {
+        inst.resp_email = inst.resp_email.trim().toLowerCase();
+      }
+    }
+  }
+});
+
+Event.addHook('beforeBulkUpdate', (options) => {
+  if (options && options.attributes && typeof options.attributes.resp_email === 'string') {
+    options.attributes.resp_email = options.attributes.resp_email.trim().toLowerCase();
   }
 });
 

@@ -68,7 +68,7 @@ const EventGuest = sequelize.define('EventGuest', {
     allowNull: true
   },
   check_in_method: {
-    type: DataTypes.ENUM('google', 'staff_manual', 'invited_qr'),
+    type: DataTypes.ENUM('google', 'staff_manual', 'invited_qr', 'auto_checkin'),
     allowNull: true
   },
   authorized_by_user_id: {
@@ -80,6 +80,36 @@ const EventGuest = sequelize.define('EventGuest', {
   timestamps: true,
   createdAt: 'created_at',
   updatedAt: 'updated_at'
+});
+
+// Normalização de email: garantir lowercase e remover espaços
+EventGuest.addHook('beforeCreate', (guest) => {
+  if (guest.guest_email && typeof guest.guest_email === 'string') {
+    guest.guest_email = guest.guest_email.trim().toLowerCase();
+  }
+});
+
+EventGuest.addHook('beforeUpdate', (guest) => {
+  if (guest.guest_email && typeof guest.guest_email === 'string') {
+    guest.guest_email = guest.guest_email.trim().toLowerCase();
+  }
+});
+
+// Suporte a operações em lote (bulkCreate/bulkUpdate)
+EventGuest.addHook('beforeBulkCreate', (instances) => {
+  if (Array.isArray(instances)) {
+    for (const inst of instances) {
+      if (inst.guest_email && typeof inst.guest_email === 'string') {
+        inst.guest_email = inst.guest_email.trim().toLowerCase();
+      }
+    }
+  }
+});
+
+EventGuest.addHook('beforeBulkUpdate', (options) => {
+  if (options && options.attributes && typeof options.attributes.guest_email === 'string') {
+    options.attributes.guest_email = options.attributes.guest_email.trim().toLowerCase();
+  }
 });
 
 module.exports = EventGuest;
