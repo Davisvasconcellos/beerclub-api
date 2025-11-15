@@ -24,7 +24,7 @@ const sequelize = new Sequelize(
     },
     dialectOptions: {
       charset: 'utf8mb4',
-      collate: 'utf8mb4_unicode_ci'
+      // Remove deprecated collate option to avoid mysql2 warnings
     }
   }
 );
@@ -42,4 +42,4 @@ const testConnection = async () => {
 module.exports = {
   sequelize,
   testConnection
-}; 
+};

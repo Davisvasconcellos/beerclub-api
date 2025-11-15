@@ -1,4 +1,14 @@
+// Load base .env first
 require('dotenv').config();
+// Then load environment-specific .env.<NODE_ENV> to override base values
+try {
+  const env = process.env.NODE_ENV || 'development';
+  const path = require('path');
+  const envPath = path.resolve(process.cwd(), `.env.${env}`);
+  require('dotenv').config({ path: envPath });
+} catch (e) {
+  // Silently ignore if env-specific file does not exist
+}
 const express = require('express');
 const cors = require('cors');
 const helmet = require('helmet');
@@ -42,8 +52,8 @@ const swaggerOptions = {
     },
     servers: [
       {
-        url: `http://localhost:${PORT}`,
-        description: 'Development server',
+        url: process.env.API_PUBLIC_BASE_URL || `http://localhost:${PORT}`,
+        description: process.env.NODE_ENV === 'production' ? 'Production server' : 'Development server',
       },
     ],
     components: {
@@ -64,11 +74,35 @@ const specs = swaggerJsdoc(swaggerOptions);
 // Security middleware
 app.use(helmet());
 
-// CORS configuration
-app.use(cors({
-  origin: process.env.CORS_ORIGIN || 'http://localhost:4200',
-  credentials: true
-}));
+// CORS configuration with support for multiple origins and localhost ranges in dev
+const parseOrigins = (value) => (value || '')
+  .split(',')
+  .map((s) => s.trim())
+  .filter(Boolean);
+
+const whitelist = parseOrigins(process.env.CORS_ORIGIN);
+
+const corsOptions = {
+  origin: (origin, callback) => {
+    // Allow non-browser clients (no origin)
+    if (!origin) return callback(null, true);
+
+    // Whitelist from env (supports comma-separated)
+    if (whitelist.includes(origin)) return callback(null, true);
+
+    // In development, allow localhost ports in ranges 4200-4299 and 4300-4399
+    if ((process.env.NODE_ENV || 'development') !== 'production') {
+      const localhostRange = /^http:\/\/localhost:(42|43)\d{2}$/;
+      if (localhostRange.test(origin)) return callback(null, true);
+    }
+
+    // Otherwise, block
+    return callback(null, false);
+  },
+  credentials: true,
+};
+
+app.use(cors(corsOptions));
 
 // Compression
 app.use(compression());

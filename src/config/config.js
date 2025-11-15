@@ -1,5 +1,13 @@
 const path = require('path');
+// Load base .env
 require('dotenv').config({ path: path.resolve(__dirname, '../../.env') });
+// Load environment-specific .env.<NODE_ENV> to override base values
+try {
+  const env = process.env.NODE_ENV || 'development';
+  require('dotenv').config({ path: path.resolve(__dirname, `../../.env.${env}`) });
+} catch (e) {
+  // Ignore if env-specific file does not exist
+}
 module.exports = {
 development: {
 username: process.env.DB_USER || 'root',
