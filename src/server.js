@@ -1,3 +1,6 @@
+// Load environment variables per environment with fallback to .env
+const envFile = `.env.${process.env.NODE_ENV || 'development'}`;
+require('dotenv').config({ path: envFile });
 require('dotenv').config();
 const express = require('express');
 const cors = require('cors');
@@ -42,8 +45,8 @@ const swaggerOptions = {
     },
     servers: [
       {
-        url: `http://localhost:${PORT}`,
-        description: 'Development server',
+        url: process.env.API_PUBLIC_BASE_URL || `http://localhost:${PORT}`,
+        description: 'API server',
       },
     ],
     components: {
@@ -65,8 +68,19 @@ const specs = swaggerJsdoc(swaggerOptions);
 app.use(helmet());
 
 // CORS configuration
+// Support multiple allowed origins via CORS_ORIGINS (comma-separated) or single CORS_ORIGIN
+const allowedOrigins = (process.env.CORS_ORIGINS || process.env.CORS_ORIGIN || 'http://localhost:4200')
+  .split(',')
+  .map(o => o.trim());
+
 app.use(cors({
-  origin: process.env.CORS_ORIGIN || 'http://localhost:4200',
+  origin: (origin, callback) => {
+    // Allow non-browser requests (no origin) and any origin in the allowed list
+    if (!origin || allowedOrigins.includes(origin)) {
+      return callback(null, true);
+    }
+    return callback(new Error('Not allowed by CORS'));
+  },
   credentials: true
 }));
 
@@ -157,7 +171,7 @@ process.on('SIGTERM', () => {
 // Start server
 const server = app.listen(PORT, async () => {
   console.log(`🚀 Server running on port ${PORT}`);
-  console.log(`📚 API Documentation: http://localhost:${PORT}/api-docs`);
+console.log(`📚 API Documentation: ${(process.env.API_PUBLIC_BASE_URL || `http://localhost:${PORT}`)}/api-docs`);
   
   try {
     await testConnection();
