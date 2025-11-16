@@ -9,6 +9,7 @@ try {
 } catch (e) {
   // Silently ignore if env-specific file does not exist
 }
+
 const express = require('express');
 const cors = require('cors');
 const helmet = require('helmet');
@@ -33,7 +34,6 @@ const eventOpenRoutes = require('./routes/eventsOpen');
 
 // Import middleware
 const errorHandler = require('./middlewares/errorHandler');
-
 
 // Import database connection
 const { sequelize, testConnection } = require('./config/database');
@@ -110,7 +110,7 @@ app.use(compression());
 // Rate limiting
 const limiter = rateLimit({
   windowMs: parseInt(process.env.RATE_LIMIT_WINDOW_MS) || 15 * 60 * 1000, // 15 minutes
-  max: parseInt(process.env.RATE_LIMIT_MAX_REQUESTS) || 100, // limit each IP to 100 requests per windowMs
+  max: parseInt(process.env.RATE_LIMIT_MAX_REQUESTS) || 100,
   message: {
     error: 'Too many requests',
     message: 'Muitas requisições. Tente novamente mais tarde.'
@@ -119,9 +119,9 @@ const limiter = rateLimit({
 
 // Slow down
 const speedLimiter = slowDown({
-  windowMs: 15 * 60 * 1000, // 15 minutes
-  delayAfter: 50, // allow 50 requests per 15 minutes, then...
-  delayMs: () => 500, // begin adding 500ms of delay per request above 50
+  windowMs: 15 * 60 * 1000,
+  delayAfter: 50,
+  delayMs: () => 500,
   validate: { delayMs: false }
 });
 
@@ -141,6 +141,16 @@ app.use(express.urlencoded({ extended: true, limit: '10mb' }));
 
 // Static files
 app.use('/uploads', express.static('uploads'));
+
+// ROTA RAIZ (para teste rápido no Render)
+app.get('/', (req, res) => {
+  res.json({
+    message: 'BeerClub API - OK',
+    environment: process.env.NODE_ENV || 'development',
+    docs: process.env.NODE_ENV === 'development' ? `${process.env.API_PUBLIC_BASE_URL || `http://localhost:${PORT}`}/api-docs` : 'Available only in development',
+    health: '/api/v1/health'
+  });
+});
 
 // Health check endpoint
 app.get('/api/v1/health', (req, res) => {
@@ -181,25 +191,36 @@ app.use('*', (req, res) => {
 app.use(errorHandler);
 
 // Graceful shutdown
+let server; // Declarar aqui para uso no SIGTERM
+
 process.on('SIGTERM', () => {
   console.log('SIGTERM received, shutting down gracefully');
-  server.close(() => {
-    console.log('Process terminated');
-  });
-});
-
-// Start server
-const server = app.listen(PORT, async () => {
-  console.log(`🚀 Server running on port ${PORT}`);
-  console.log(`📚 API Documentation: http://localhost:${PORT}/api-docs`);
-  
-  try {
-    await testConnection();
-    console.log('✅ Database connected successfully');
-    console.log('✅ Node Server OK');
-  } catch (error) {
-    console.error('❌ Database connection failed:', error);
+  if (server) {
+    server.close(() => {
+      console.log('Process terminated');
+      process.exit(0);
+    });
   }
 });
+
+// INICIA O SERVIDOR (SEM ASYNC!)
+server = app.listen(PORT, '0.0.0.0', () => {
+  console.log(`Server running on port ${PORT}`);
+  if (process.env.NODE_ENV === 'development') {
+    console.log(`API Documentation: ${process.env.API_PUBLIC_BASE_URL || `http://localhost:${PORT}`}/api-docs`);
+  }
+});
+
+// CONEXÃO COM BANCO FORA DO LISTEN
+(async () => {
+  try {
+    await testConnection();
+    console.log('Database connected successfully');
+    console.log('Node Server OK');
+  } catch (error) {
+    console.error('Database connection failed:', error);
+    process.exit(1);
+  }
+})();
 
 module.exports = app;
