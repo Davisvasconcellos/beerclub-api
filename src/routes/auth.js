@@ -7,18 +7,37 @@ const { authenticateToken } = require('../middlewares/auth');
 const admin = require('firebase-admin');
 
 // Firebase Admin initialization (supports Application Default or JSON from env)
+// if (!admin.apps.length) {
+//   try {
+//     if (process.env.FIREBASE_SERVICE_ACCOUNT_JSON) {
+//       const serviceAccount = JSON.parse(process.env.FIREBASE_SERVICE_ACCOUNT_JSON);
+//       admin.initializeApp({ credential: admin.credential.cert(serviceAccount) });
+//     } else {
+//       admin.initializeApp({ credential: admin.credential.applicationDefault() });
+//     }
+//   } catch (err) {
+//     console.error('Firebase Admin initialization error:', err);
+//   }
+// }
+
+// Firebase Admin initialization
 if (!admin.apps.length) {
   try {
-    if (process.env.FIREBASE_SERVICE_ACCOUNT_JSON) {
-      const serviceAccount = JSON.parse(process.env.FIREBASE_SERVICE_ACCOUNT_JSON);
-      admin.initializeApp({ credential: admin.credential.cert(serviceAccount) });
-    } else {
-      admin.initializeApp({ credential: admin.credential.applicationDefault() });
-    }
+    admin.initializeApp({
+      credential: admin.credential.cert({
+        projectId: process.env.FIREBASE_PROJECT_ID,
+        clientEmail: process.env.FIREBASE_CLIENT_EMAIL,
+        privateKey: process.env.FIREBASE_PRIVATE_KEY?.replace(/\\n/g, '\n'),
+      }),
+    });
+    console.log('Firebase Admin inicializado com sucesso');
   } catch (err) {
-    console.error('Firebase Admin initialization error:', err);
+    console.error('Erro ao inicializar Firebase Admin:', err.message);
   }
 }
+
+
+
 
 const router = express.Router();
 
