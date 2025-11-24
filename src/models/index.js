@@ -18,6 +18,11 @@ const EventQuestion = require('./EventQuestion');
 const EventResponse = require('./EventResponse');
 const EventAnswer = require('./EventAnswer');
 const EventGuest = require('./EventGuest');
+const EventJam = require('./EventJam');
+const EventJamSong = require('./EventJamSong');
+const EventJamSongInstrumentSlot = require('./EventJamSongInstrumentSlot');
+const EventJamSongCandidate = require('./EventJamSongCandidate');
+const EventJamSongRating = require('./EventJamSongRating');
 
 // Define associations
 
@@ -112,6 +117,27 @@ EventGuest.belongsTo(Event, { foreignKey: 'event_id', as: 'event' });
 User.hasMany(EventGuest, { foreignKey: 'user_id', as: 'eventGuests' });
 EventGuest.belongsTo(User, { foreignKey: 'user_id', as: 'user' });
 
+Event.hasMany(EventJam, { foreignKey: 'event_id', as: 'jams' });
+EventJam.belongsTo(Event, { foreignKey: 'event_id', as: 'event' });
+
+EventJam.hasMany(EventJamSong, { foreignKey: 'jam_id', as: 'songs' });
+EventJamSong.belongsTo(EventJam, { foreignKey: 'jam_id', as: 'jam' });
+
+EventJamSong.hasMany(EventJamSongInstrumentSlot, { foreignKey: 'jam_song_id', as: 'instrumentSlots' });
+EventJamSongInstrumentSlot.belongsTo(EventJamSong, { foreignKey: 'jam_song_id', as: 'song' });
+
+EventJamSong.hasMany(EventJamSongCandidate, { foreignKey: 'jam_song_id', as: 'candidates' });
+EventJamSongCandidate.belongsTo(EventJamSong, { foreignKey: 'jam_song_id', as: 'song' });
+EventJamSongCandidate.belongsTo(EventGuest, { foreignKey: 'event_guest_id', as: 'guest' });
+EventGuest.hasMany(EventJamSongCandidate, { foreignKey: 'event_guest_id', as: 'jamSongCandidates' });
+
+EventJamSong.hasMany(EventJamSongRating, { foreignKey: 'jam_song_id', as: 'ratings' });
+EventJamSongRating.belongsTo(EventJamSong, { foreignKey: 'jam_song_id', as: 'song' });
+EventJamSongRating.belongsTo(User, { foreignKey: 'user_id', as: 'user' });
+User.hasMany(EventJamSongRating, { foreignKey: 'user_id', as: 'jamSongRatings' });
+EventJamSongRating.belongsTo(EventGuest, { foreignKey: 'event_guest_id', as: 'guest' });
+EventGuest.hasMany(EventJamSongRating, { foreignKey: 'event_guest_id', as: 'jamSongRatings' });
+
 module.exports = {
   sequelize,
   Plan,
@@ -131,4 +157,9 @@ module.exports = {
   ,EventResponse
   ,EventAnswer
   ,EventGuest
+  ,EventJam
+  ,EventJamSong
+  ,EventJamSongInstrumentSlot
+  ,EventJamSongCandidate
+  ,EventJamSongRating
 };

@@ -31,6 +31,7 @@ const storeRoutes = require('./routes/stores');
 const footballTeamsRoutes = require('./routes/footballTeams');
 const eventRoutes = require('./routes/events');
 const eventOpenRoutes = require('./routes/eventsOpen');
+const eventJamsRoutes = require('./routes/eventJams');
 
 // Import middleware
 const errorHandler = require('./middlewares/errorHandler');
@@ -173,6 +174,8 @@ app.use('/api/v1/events', eventRoutes);
 app.use('/api/events', eventOpenRoutes);
 // Aliases públicos versionados
 app.use('/api/public/v1/events', eventOpenRoutes);
+app.use('/api/v1/events', eventJamsRoutes);
+app.use('/api/events', eventJamsRoutes);
 
 // Swagger documentation (only in development)
 if (process.env.NODE_ENV === 'development') {
