@@ -23,13 +23,29 @@ const admin = require('firebase-admin');
 // Firebase Admin initialization
 if (!admin.apps.length) {
   try {
-    admin.initializeApp({
-      credential: admin.credential.cert({
+    let initialized = false;
+
+    if (process.env.FIREBASE_SERVICE_ACCOUNT_JSON) {
+      const serviceAccount = JSON.parse(process.env.FIREBASE_SERVICE_ACCOUNT_JSON);
+      admin.initializeApp({ credential: admin.credential.cert(serviceAccount) });
+      initialized = true;
+    } else if (process.env.FIREBASE_PROJECT_ID && process.env.FIREBASE_CLIENT_EMAIL && process.env.FIREBASE_PRIVATE_KEY) {
+      const pk = process.env.FIREBASE_PRIVATE_KEY.replace(/\\n/g, '\n');
+      const serviceAccount = {
+        project_id: process.env.FIREBASE_PROJECT_ID,
         projectId: process.env.FIREBASE_PROJECT_ID,
+        client_email: process.env.FIREBASE_CLIENT_EMAIL,
         clientEmail: process.env.FIREBASE_CLIENT_EMAIL,
-        privateKey: process.env.FIREBASE_PRIVATE_KEY?.replace(/\\n/g, '\n'),
-      }),
-    });
+        private_key: pk,
+        privateKey: pk,
+      };
+      admin.initializeApp({ credential: admin.credential.cert(serviceAccount) });
+      initialized = true;
+    }
+
+    if (!initialized) {
+      admin.initializeApp({ credential: admin.credential.applicationDefault() });
+    }
     console.log('Firebase Admin inicializado com sucesso');
   } catch (err) {
     console.error('Erro ao inicializar Firebase Admin:', err.message);

@@ -17,3 +17,4 @@ const EventJam = sequelize.define('EventJam', {
 });
 
 module.exports = EventJam;
+

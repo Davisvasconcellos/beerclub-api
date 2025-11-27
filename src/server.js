@@ -176,6 +176,7 @@ app.use('/api/events', eventOpenRoutes);
 app.use('/api/public/v1/events', eventOpenRoutes);
 app.use('/api/v1/events', eventJamsRoutes);
 app.use('/api/events', eventJamsRoutes);
+app.use('/api/public/v1/events', eventJamsRoutes);
 
 // Swagger documentation (only in development)
 if (process.env.NODE_ENV === 'development') {

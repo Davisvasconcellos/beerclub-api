@@ -16,3 +16,4 @@ const EventJamSongInstrumentSlot = sequelize.define('EventJamSongInstrumentSlot'
 });
 
 module.exports = EventJamSongInstrumentSlot;
+

@@ -16,3 +16,4 @@ const EventJamSongCandidate = sequelize.define('EventJamSongCandidate', {
 });
 
 module.exports = EventJamSongCandidate;
+

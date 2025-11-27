@@ -20,3 +20,4 @@ const EventJamSong = sequelize.define('EventJamSong', {
 });
 
 module.exports = EventJamSong;
+

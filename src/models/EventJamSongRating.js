@@ -14,3 +14,4 @@ const EventJamSongRating = sequelize.define('EventJamSongRating', {
 });
 
 module.exports = EventJamSongRating;
+
