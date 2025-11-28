@@ -21,16 +21,27 @@ const emitEvent = (eventId, jamId, type, payload) => {
 
 router.get('/:id/jams/:jamId/stream', (req, res) => {
   const { id, jamId } = req.params;
+  req.headers['x-no-compression'] = 'true';
   res.setHeader('Content-Type', 'text/event-stream');
   res.setHeader('Cache-Control', 'no-cache');
   res.setHeader('Connection', 'keep-alive');
+  const origin = req.headers.origin;
+  if (origin && (origin === 'http://localhost:4200' || /^(http:\/\/localhost:(42|43)\d{2})$/.test(origin))) {
+    res.setHeader('Access-Control-Allow-Origin', origin);
+    res.setHeader('Access-Control-Allow-Credentials', 'true');
+  }
+  res.setHeader('X-Accel-Buffering', 'no');
   res.flushHeaders();
   const key = getKey(id, jamId);
   if (!sseClients.has(key)) sseClients.set(key, new Set());
   const set = sseClients.get(key);
   set.add(res);
+  const heartbeat = setInterval(() => {
+    try { res.write(`: ping\n\n`); } catch {}
+  }, 30000);
   req.on('close', () => {
     set.delete(res);
+    clearInterval(heartbeat);
   });
 });
 
@@ -367,6 +378,32 @@ router.get('/:id/jams/my/on-stage', authenticateToken, async (req, res) => {
     return { jam: jamsById[song.jam_id] || { id: song.jam_id }, id: song.id, title: song.title, artist: song.artist, status: song.status, instrument_slots: slots, my_application: { instrument: myApp.instrument, status: myApp.status } };
   }).filter(Boolean);
   return res.json({ success: true, data });
+});
+
+router.get('/:id/jam', authenticateToken, async (req, res) => {
+  const { id } = req.params;
+  const event = await Event.findOne({ where: { id_code: id } });
+  if (!event) return res.status(404).json({ error: 'Not Found', message: 'Evento não encontrado' });
+  const guest = await EventGuest.findOne({ where: { event_id: event.id, user_id: req.user.userId } });
+  if (!guest || !guest.check_in_at) return res.status(403).json({ error: 'Access denied', message: 'Check-in obrigatório para visualizar' });
+  const jam = await EventJam.findOne({ where: { event_id: event.id }, order: [['order_index', 'ASC']] });
+  return res.json({ success: true, data: { jam_id: jam ? jam.id : null } });
+});
+
+router.get('/stream-test', (req, res) => {
+  res.setHeader('Content-Type', 'text/event-stream');
+  res.setHeader('Cache-Control', 'no-cache');
+  res.setHeader('Connection', 'keep-alive');
+  res.flushHeaders();
+  const write = () => {
+    const payload = { type: 'stream_test', time: new Date().toISOString(), random: Math.floor(Math.random() * 1000000) };
+    res.write(`data: ${JSON.stringify(payload)}\n\n`);
+  };
+  write();
+  const intervalId = setInterval(write, 2000);
+  req.on('close', () => {
+    clearInterval(intervalId);
+  });
 });
 
 router.post('/:id/jams/:jamId/songs/:songId/apply', authenticateToken, [

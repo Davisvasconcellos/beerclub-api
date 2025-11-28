@@ -105,8 +105,14 @@ const corsOptions = {
 
 app.use(cors(corsOptions));
 
-// Compression
-app.use(compression());
+// Compression with SSE-safe filter
+const shouldCompress = (req, res) => {
+  if (req.headers['x-no-compression']) return false;
+  const accept = req.headers['accept'] || '';
+  if (accept.includes('text/event-stream')) return false;
+  return compression.filter(req, res);
+};
+app.use(compression({ filter: shouldCompress }));
 
 // Rate limiting
 const limiter = rateLimit({
@@ -177,6 +183,30 @@ app.use('/api/public/v1/events', eventOpenRoutes);
 app.use('/api/v1/events', eventJamsRoutes);
 app.use('/api/events', eventJamsRoutes);
 app.use('/api/public/v1/events', eventJamsRoutes);
+
+app.get('/api/stream-test', (req, res) => {
+  const origin = req.headers.origin;
+  if (origin && (origin === 'http://localhost:4200' || origin.endsWith('.seudominio.com'))) {
+    res.setHeader('Access-Control-Allow-Origin', origin);
+  } else {
+    res.setHeader('Access-Control-Allow-Origin', 'http://localhost:4200');
+  }
+  res.setHeader('Access-Control-Allow-Credentials', 'true');
+  res.setHeader('Content-Type', 'text/event-stream');
+  res.setHeader('Cache-Control', 'no-cache');
+  res.setHeader('Connection', 'keep-alive');
+  res.flushHeaders();
+  const write = () => {
+    const payload = { type: 'stream_test', time: new Date().toISOString(), random: Math.floor(Math.random() * 1000000) };
+    res.write(`data: ${JSON.stringify(payload)}\n\n`);
+  };
+  write();
+  write();
+  const intervalId = setInterval(write, 2000);
+  req.on('close', () => {
+    clearInterval(intervalId);
+  });
+});
 
 // Swagger documentation (only in development)
 if (process.env.NODE_ENV === 'development') {
