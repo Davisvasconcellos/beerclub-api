@@ -26,7 +26,7 @@ router.get('/:id/jams/:jamId/stream', (req, res) => {
   res.setHeader('Cache-Control', 'no-cache');
   res.setHeader('Connection', 'keep-alive');
   const origin = req.headers.origin;
-  if (origin && (origin === 'http://localhost:4200' || /^(http:\/\/localhost:(42|43)\d{2})$/.test(origin))) {
+  if (origin) {
     res.setHeader('Access-Control-Allow-Origin', origin);
     res.setHeader('Access-Control-Allow-Credentials', 'true');
   }

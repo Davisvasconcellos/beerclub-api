@@ -186,12 +186,12 @@ app.use('/api/public/v1/events', eventJamsRoutes);
 
 app.get('/api/stream-test', (req, res) => {
   const origin = req.headers.origin;
-  if (origin && (origin === 'http://localhost:4200' || origin.endsWith('.seudominio.com'))) {
+  if (origin) {
     res.setHeader('Access-Control-Allow-Origin', origin);
-  } else {
-    res.setHeader('Access-Control-Allow-Origin', 'http://localhost:4200');
   }
   res.setHeader('Access-Control-Allow-Credentials', 'true');
+  req.headers['x-no-compression'] = 'true';
+  res.setHeader('X-Accel-Buffering', 'no');
   res.setHeader('Content-Type', 'text/event-stream');
   res.setHeader('Cache-Control', 'no-cache');
   res.setHeader('Connection', 'keep-alive');
