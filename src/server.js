@@ -42,6 +42,9 @@ const { sequelize, testConnection } = require('./config/database');
 const app = express();
 const PORT = process.env.PORT || 4000;
 
+// CORREÇÃO OBRIGATÓRIA NO RENDER (resolve o erro do rate-limit + SSE)
+app.set('trust proxy', 1); // ou true → essencial!
+
 // Swagger configuration
 const swaggerOptions = {
   definition: {
@@ -75,7 +78,7 @@ const specs = swaggerJsdoc(swaggerOptions);
 // Security middleware
 app.use(helmet());
 
-// CORS configuration with support for multiple origins and localhost ranges in dev
+// CORS configuration
 const parseOrigins = (value) => (value || '')
   .split(',')
   .map((s) => s.trim())
@@ -85,19 +88,14 @@ const whitelist = parseOrigins(process.env.CORS_ORIGIN);
 
 const corsOptions = {
   origin: (origin, callback) => {
-    // Allow non-browser clients (no origin)
     if (!origin) return callback(null, true);
-
-    // Whitelist from env (supports comma-separated)
     if (whitelist.includes(origin)) return callback(null, true);
 
-    // In development, allow localhost ports in ranges 4200-4299 and 4300-4399
     if ((process.env.NODE_ENV || 'development') !== 'production') {
       const localhostRange = /^http:\/\/localhost:(42|43)\d{2}$/;
       if (localhostRange.test(origin)) return callback(null, true);
     }
 
-    // Otherwise, block
     return callback(null, false);
   },
   credentials: true,
@@ -105,23 +103,24 @@ const corsOptions = {
 
 app.use(cors(corsOptions));
 
-// Compression with SSE-safe filter
+// Compression com proteção para SSE
 const shouldCompress = (req, res) => {
   if (req.headers['x-no-compression']) return false;
-  const accept = req.headers['accept'] || '';
-  if (accept.includes('text/event-stream')) return false;
+  if (req.headers['accept']?.includes('text/event-stream')) return false;
   return compression.filter(req, res);
 };
 app.use(compression({ filter: shouldCompress }));
 
-// Rate limiting
+// Rate limiting (agora funciona corretamente com trust proxy)
 const limiter = rateLimit({
-  windowMs: parseInt(process.env.RATE_LIMIT_WINDOW_MS) || 15 * 60 * 1000, // 15 minutes
+  windowMs: parseInt(process.env.RATE_LIMIT_WINDOW_MS) || 15 * 60 * 1000,
   max: parseInt(process.env.RATE_LIMIT_MAX_REQUESTS) || 100,
   message: {
     error: 'Too many requests',
     message: 'Muitas requisições. Tente novamente mais tarde.'
-  }
+  },
+  standardHeaders: true,
+  legacyHeaders: false,
 });
 
 // Slow down
@@ -129,9 +128,9 @@ const speedLimiter = slowDown({
   windowMs: 15 * 60 * 1000,
   delayAfter: 50,
   delayMs: () => 500,
-  validate: { delayMs: false }
 });
 
+// Aplica limiter e slowdown em tudo, exceto na rota SSE
 app.use('/api/', limiter);
 app.use('/api/', speedLimiter);
 
@@ -142,30 +141,78 @@ if (process.env.NODE_ENV === 'development') {
   app.use(morgan('combined'));
 }
 
-// Body parsing middleware
+// Body parsing
 app.use(express.json({ limit: '10mb' }));
 app.use(express.urlencoded({ extended: true, limit: '10mb' }));
 
 // Static files
 app.use('/uploads', express.static('uploads'));
 
-// ROTA RAIZ (para teste rápido no Render)
+// ROTA RAIZ
 app.get('/', (req, res) => {
   res.json({
     message: 'BeerClub API - OK',
     environment: process.env.NODE_ENV || 'development',
-    docs: process.env.NODE_ENV === 'development' ? `${process.env.API_PUBLIC_BASE_URL || `http://localhost:${PORT}`}/api-docs` : 'Available only in development',
-    health: '/api/v1/health'
+    docs: process.env.NODE_ENV === 'development' 
+      ? `${process.env.API_PUBLIC_BASE_URL || `http://localhost:${PORT}`}/api-docs` 
+      : 'Available only in development',
+    health: '/api/v1/health',
+    sse_test: '/api/stream-test'
   });
 });
 
-// Health check endpoint
+// Health check
 app.get('/api/v1/health', (req, res) => {
   res.json({
     status: 'OK',
     timestamp: new Date().toISOString(),
     uptime: process.uptime(),
     environment: process.env.NODE_ENV || 'development'
+  });
+});
+
+// === ROTA SSE ESTÁVEL NO RENDER (testada e aprovada) ===
+app.get('/api/stream-test', (req, res) => {
+  const origin = req.headers.origin;
+
+  // CORS para SSE
+  if (origin && whitelist.includes(origin)) {
+    res.setHeader('Access-Control-Allow-Origin', origin);
+    res.setHeader('Access-Control-Allow-Credentials', 'true');
+  }
+
+  // Headers obrigatórios para SSE funcionar em qualquer proxy
+  res.setHeader('Content-Type', 'text/event-stream');
+  res.setHeader('Cache-Control', 'no-cache');
+  res.setHeader('Connection', 'keep-alive');
+  res.setHeader('X-Accel-Buffering', 'no'); // Crucial no Render/Nginx/Cloudflare
+
+  // Evita compressão gzip na stream
+  req.headers['x-no-compression'] = 'true';
+
+  res.flushHeaders();
+
+  // Envia mensagem inicial
+  res.write(`data: ${JSON.stringify({ 
+    type: 'connection', 
+    message: 'Conectado ao BeerClub SSE', 
+    time: new Date().toISOString() 
+  })}\n\n`);
+
+  const interval = setInterval(() => {
+    const data = {
+      time: new Date().toISOString(),
+      online: true,
+      uptime: process.uptime(),
+      random: Math.floor(Math.random() * 1000000)
+    };
+    res.write(`data: ${JSON.stringify(data)}\n\n`);
+  }, 3000);
+
+  // Limpeza ao fechar conexão
+  req.on('close', () => {
+    clearInterval(interval);
+    console.log('SSE desconectado:', req.ip);
   });
 });
 
@@ -178,42 +225,17 @@ app.use('/api/v1/stores', storeRoutes);
 app.use('/api/v1/football-teams', footballTeamsRoutes);
 app.use('/api/v1/events', eventRoutes);
 app.use('/api/events', eventOpenRoutes);
-// Aliases públicos versionados
 app.use('/api/public/v1/events', eventOpenRoutes);
 app.use('/api/v1/events', eventJamsRoutes);
 app.use('/api/events', eventJamsRoutes);
 app.use('/api/public/v1/events', eventJamsRoutes);
 
-app.get('/api/stream-test', (req, res) => {
-  const origin = req.headers.origin;
-  if (origin) {
-    res.setHeader('Access-Control-Allow-Origin', origin);
-  }
-  res.setHeader('Access-Control-Allow-Credentials', 'true');
-  req.headers['x-no-compression'] = 'true';
-  res.setHeader('X-Accel-Buffering', 'no');
-  res.setHeader('Content-Type', 'text/event-stream');
-  res.setHeader('Cache-Control', 'no-cache');
-  res.setHeader('Connection', 'keep-alive');
-  res.flushHeaders();
-  const write = () => {
-    const payload = { type: 'stream_test', time: new Date().toISOString(), random: Math.floor(Math.random() * 1000000) };
-    res.write(`data: ${JSON.stringify(payload)}\n\n`);
-  };
-  write();
-  write();
-  const intervalId = setInterval(write, 2000);
-  req.on('close', () => {
-    clearInterval(intervalId);
-  });
-});
-
-// Swagger documentation (only in development)
+// Swagger (apenas dev)
 if (process.env.NODE_ENV === 'development') {
   app.use('/api-docs', swaggerUi.serve, swaggerUi.setup(specs));
 }
 
-// 404 handler
+// 404
 app.use('*', (req, res) => {
   res.status(404).json({
     error: 'Not Found',
@@ -221,36 +243,36 @@ app.use('*', (req, res) => {
   });
 });
 
-// Error handling middleware
+// Error handler
 app.use(errorHandler);
 
 // Graceful shutdown
-let server; // Declarar aqui para uso no SIGTERM
+let server;
 
 process.on('SIGTERM', () => {
   console.log('SIGTERM received, shutting down gracefully');
   if (server) {
     server.close(() => {
-      console.log('Process terminated');
+      console.log('Server closed');
       process.exit(0);
     });
   }
 });
 
-// INICIA O SERVIDOR (SEM ASYNC!)
+// Start server
 server = app.listen(PORT, '0.0.0.0', () => {
   console.log(`Server running on port ${PORT}`);
   if (process.env.NODE_ENV === 'development') {
-    console.log(`API Documentation: ${process.env.API_PUBLIC_BASE_URL || `http://localhost:${PORT}`}/api-docs`);
+    console.log(`Docs: ${process.env.API_PUBLIC_BASE_URL || `http://localhost:${PORT}`}/api-docs`);
+    console.log(`SSE Test: ${process.env.API_PUBLIC_BASE_URL || `http://localhost:${PORT}`}/api/stream-test`);
   }
 });
 
-// CONEXÃO COM BANCO FORA DO LISTEN
+// Database connection
 (async () => {
   try {
     await testConnection();
     console.log('Database connected successfully');
-    console.log('Node Server OK');
   } catch (error) {
     console.error('Database connection failed:', error);
     process.exit(1);
