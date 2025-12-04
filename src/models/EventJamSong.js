@@ -10,6 +10,7 @@ const EventJamSong = sequelize.define('EventJamSong', {
   tempo_bpm: { type: DataTypes.INTEGER, allowNull: true },
   notes: { type: DataTypes.TEXT, allowNull: true },
   release_batch: { type: DataTypes.INTEGER, allowNull: true },
+  ready: { type: DataTypes.BOOLEAN, allowNull: false, defaultValue: false },
   status: { type: DataTypes.ENUM('planned','open_for_candidates','on_stage','played','canceled'), allowNull: false, defaultValue: 'planned' },
   order_index: { type: DataTypes.INTEGER, allowNull: false, defaultValue: 0 }
 }, {
@@ -20,4 +21,3 @@ const EventJamSong = sequelize.define('EventJamSong', {
 });
 
 module.exports = EventJamSong;
-
