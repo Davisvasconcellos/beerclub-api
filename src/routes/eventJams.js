@@ -367,7 +367,7 @@ router.get('/:id/jams/open', authenticateToken, async (req, res) => {
     const requiredCount = slots.filter(s => s.required).length;
     const approvedRequired = slots.filter(s => s.required).reduce((a, s) => a + (s.approved_count > 0 ? 1 : 0), 0);
     const myApp = (song.candidates || []).find(c => c.event_guest_id === guest.id) || null;
-    return { jam: jamsById[song.jam_id] || { id: song.jam_id }, id: song.id, title: song.title, artist: song.artist, status: song.status, release_batch: song.release_batch, instrument_slots: slots, my_application: myApp ? { instrument: myApp.instrument, status: myApp.status } : null, lineup_completeness: { required_instruments: requiredCount, approved_required: approvedRequired, is_full: approvedRequired === requiredCount }, rating_summary: ratings.length ? { average: Number(avg.toFixed(2)), count: ratings.length } : null };
+    return { jam: jamsById[song.jam_id] || { id: song.jam_id }, id: song.id, jam_id: song.jam_id, title: song.title, artist: song.artist, status: song.status, ready: !!song.ready, order_index: song.order_index, release_batch: song.release_batch, instrument_slots: slots, my_application: myApp ? { instrument: myApp.instrument, status: myApp.status } : null, lineup_completeness: { required_instruments: requiredCount, approved_required: approvedRequired, is_full: approvedRequired === requiredCount }, rating_summary: ratings.length ? { average: Number(avg.toFixed(2)), count: ratings.length } : null };
   });
   return res.json({ success: true, data });
 });
