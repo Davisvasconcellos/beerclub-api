@@ -1,6 +1,6 @@
 const express = require('express');
 const { body, validationResult } = require('express-validator');
-const { sequelize, Store, User, Product, StoreUser, StoreSchedule } = require('../models');
+const { sequelize, Store, User, Product, StoreUser, StoreSchedule, ApVendor, ApPayable, ApPayment } = require('../models');
 const { authenticateToken, requireRole } = require('../middlewares/auth');
 
 const router = express.Router();
@@ -639,5 +639,361 @@ router.put('/:id_code/schedule',
     }
   }
 );
+
+/**
+ * @swagger
+ * /api/v1/stores/{storeId}/vendors:
+ *   get:
+ *     summary: Listar fornecedores da loja
+ *     tags: [Accounts Payable]
+ *     security:
+ *       - bearerAuth: []
+ *     parameters:
+ *       - in: path
+ *         name: storeId
+ *         required: true
+ *         schema:
+ *           type: integer
+ *       - in: query
+ *         name: page
+ *         schema:
+ *           type: integer
+ *       - in: query
+ *         name: limit
+ *         schema:
+ *           type: integer
+ *       - in: query
+ *         name: search
+ *         schema:
+ *           type: string
+ *     responses:
+ *       200:
+ *         description: Lista de fornecedores
+ */
+router.get('/:storeId/vendors', authenticateToken, async (req, res) => {
+  try {
+    const { storeId } = req.params;
+    const { page = 1, limit = 20, search } = req.query;
+    const store = await Store.findByPk(storeId);
+    if (!store) return res.status(404).json({ error: 'Not Found', message: 'Loja não encontrada' });
+    if (req.user.role !== 'master' && store.owner_id !== req.user.userId) return res.status(403).json({ error: 'Access denied', message: 'Acesso negado' });
+    const where = { store_id: store.id };
+    if (search) {
+      const { Op } = require('sequelize');
+      where[Op.or] = [
+        { name: { [Op.like]: `%${search}%` } },
+        { document: { [Op.like]: `%${search}%` } }
+      ];
+    }
+    const offset = (parseInt(page) - 1) * parseInt(limit);
+    const { count, rows } = await ApVendor.findAndCountAll({ where, order: [['name', 'ASC']], limit: parseInt(limit), offset });
+    return res.json({ success: true, data: rows, meta: { page: parseInt(page), limit: parseInt(limit), total: count } });
+  } catch (error) {
+    console.error('List vendors error:', error);
+    return res.status(500).json({ error: 'Internal server error', message: 'Erro interno do servidor' });
+  }
+});
+
+/**
+ * @swagger
+ * /api/v1/stores/{storeId}/vendors:
+ *   post:
+ *     summary: Criar fornecedor
+ *     tags: [Accounts Payable]
+ *     security:
+ *       - bearerAuth: []
+ *     parameters:
+ *       - in: path
+ *         name: storeId
+ *         required: true
+ *         schema:
+ *           type: integer
+ *     requestBody:
+ *       required: true
+ *       content:
+ *         application/json:
+ *           schema:
+ *             type: object
+ *             required: [name]
+ *             properties:
+ *               name: { type: string }
+ *               document: { type: string }
+ *               email: { type: string, format: email }
+ *               phone: { type: string }
+ *               bank_info: { type: object }
+ *     responses:
+ *       201:
+ *         description: Fornecedor criado
+ */
+router.post('/:storeId/vendors', authenticateToken, requireRole('admin', 'master'), [
+  body('name').isLength({ min: 2 }),
+  body('document').optional().isString(),
+  body('email').optional().isEmail(),
+  body('phone').optional().isString(),
+  body('bank_info').optional()
+], async (req, res) => {
+  const errors = validationResult(req);
+  if (!errors.isEmpty()) return res.status(400).json({ error: 'Validation error', details: errors.array() });
+  try {
+    const { storeId } = req.params;
+    const store = await Store.findByPk(storeId);
+    if (!store) return res.status(404).json({ error: 'Not Found', message: 'Loja não encontrada' });
+    if (req.user.role !== 'master' && store.owner_id !== req.user.userId) return res.status(403).json({ error: 'Access denied', message: 'Acesso negado' });
+    const { name, document, email, phone, bank_info } = req.body || {};
+    const vendor = await ApVendor.create({ store_id: store.id, name, document, email, phone, bank_info });
+    return res.status(201).json({ success: true, data: vendor });
+  } catch (error) {
+    console.error('Create vendor error:', error);
+    return res.status(500).json({ error: 'Internal server error', message: 'Erro interno do servidor' });
+  }
+});
+
+/**
+ * @swagger
+ * /api/v1/stores/{storeId}/payables:
+ *   get:
+ *     summary: Listar contas a pagar
+ *     tags: [Accounts Payable]
+ *     security:
+ *       - bearerAuth: []
+ *     parameters:
+ *       - in: path
+ *         name: storeId
+ *         required: true
+ *         schema:
+ *           type: integer
+ *       - in: query
+ *         name: page
+ *         schema: { type: integer }
+ *       - in: query
+ *         name: limit
+ *         schema: { type: integer }
+ *       - in: query
+ *         name: status
+ *         schema: { type: string, enum: [pending, approved, scheduled, paid, overdue, canceled] }
+ *       - in: query
+ *         name: from
+ *         schema: { type: string, format: date }
+ *       - in: query
+ *         name: to
+ *         schema: { type: string, format: date }
+ *       - in: query
+ *         name: order
+ *         schema: { type: string, enum: [asc, desc] }
+ *     responses:
+ *       200:
+ *         description: Lista de títulos
+ */
+router.get('/:storeId/payables', authenticateToken, async (req, res) => {
+  try {
+    const { storeId } = req.params;
+    const { page = 1, limit = 20, status, from, to, order = 'asc' } = req.query;
+    const store = await Store.findByPk(storeId);
+    if (!store) return res.status(404).json({ error: 'Not Found', message: 'Loja não encontrada' });
+    if (req.user.role !== 'master' && store.owner_id !== req.user.userId) return res.status(403).json({ error: 'Access denied', message: 'Acesso negado' });
+    const { Op } = require('sequelize');
+    const where = { store_id: store.id };
+    if (status) where.status = status;
+    if (from || to) {
+      where.due_date = {};
+      if (from) where.due_date[Op.gte] = from;
+      if (to) where.due_date[Op.lte] = to;
+    }
+    const offset = (parseInt(page) - 1) * parseInt(limit);
+    const { count, rows } = await ApPayable.findAndCountAll({ where, include: [{ model: ApVendor, as: 'vendor', attributes: ['id', 'id_code', 'name'] }], order: [['due_date', order.toLowerCase() === 'desc' ? 'DESC' : 'ASC']], limit: parseInt(limit), offset });
+    return res.json({ success: true, data: rows, meta: { page: parseInt(page), limit: parseInt(limit), total: count } });
+  } catch (error) {
+    console.error('List payables error:', error);
+    return res.status(500).json({ error: 'Internal server error', message: 'Erro interno do servidor' });
+  }
+});
+
+/**
+ * @swagger
+ * /api/v1/stores/{storeId}/payables:
+ *   post:
+ *     summary: Criar título a pagar
+ *     tags: [Accounts Payable]
+ *     security:
+ *       - bearerAuth: []
+ *     parameters:
+ *       - in: path
+ *         name: storeId
+ *         required: true
+ *         schema: { type: integer }
+ *     requestBody:
+ *       required: true
+ *       content:
+ *         application/json:
+ *           schema:
+ *             type: object
+ *             required: [vendor_id, amount, due_date]
+ *             properties:
+ *               vendor_id: { type: integer }
+ *               amount: { type: number }
+ *               currency: { type: string, default: BRL }
+ *               issue_date: { type: string, format: date }
+ *               due_date: { type: string, format: date }
+ *               invoice_number: { type: string }
+ *               description: { type: string }
+ *               category: { type: string }
+ *               cost_center: { type: string }
+ *               attachment_url: { type: string, format: uri }
+ *     responses:
+ *       201:
+ *         description: Título criado
+ */
+router.post('/:storeId/payables', authenticateToken, requireRole('admin', 'master'), [
+  body('vendor_id').isInt({ min: 1 }),
+  body('amount').isFloat({ min: 0 }),
+  body('currency').optional().isLength({ min: 3, max: 3 }),
+  body('issue_date').optional().isISO8601(),
+  body('due_date').isISO8601(),
+  body('invoice_number').optional().isString(),
+  body('description').optional().isString(),
+  body('category').optional().isString(),
+  body('cost_center').optional().isString(),
+  body('attachment_url').optional().isURL()
+], async (req, res) => {
+  const errors = validationResult(req);
+  if (!errors.isEmpty()) return res.status(400).json({ error: 'Validation error', details: errors.array() });
+  try {
+    const { storeId } = req.params;
+    const store = await Store.findByPk(storeId);
+    if (!store) return res.status(404).json({ error: 'Not Found', message: 'Loja não encontrada' });
+    if (req.user.role !== 'master' && store.owner_id !== req.user.userId) return res.status(403).json({ error: 'Access denied', message: 'Acesso negado' });
+    const { vendor_id, amount, currency = 'BRL', issue_date, due_date, invoice_number, description, category, cost_center, attachment_url } = req.body || {};
+    const existsVendor = await ApVendor.findOne({ where: { id: vendor_id, store_id: store.id } });
+    if (!existsVendor) return res.status(404).json({ error: 'Not Found', message: 'Fornecedor não encontrado na loja' });
+    const payable = await ApPayable.create({ store_id: store.id, vendor_id, amount, currency, issue_date, due_date, invoice_number, description, category, cost_center, attachment_url, created_by_user_id: req.user.userId });
+    return res.status(201).json({ success: true, data: payable });
+  } catch (error) {
+    console.error('Create payable error:', error);
+    return res.status(500).json({ error: 'Internal server error', message: 'Erro interno do servidor' });
+  }
+});
+
+/**
+ * @swagger
+ * /api/v1/stores/{storeId}/payables/{id}/status:
+ *   patch:
+ *     summary: Atualizar status do título
+ *     tags: [Accounts Payable]
+ *     security:
+ *       - bearerAuth: []
+ *     parameters:
+ *       - in: path
+ *         name: storeId
+ *         required: true
+ *         schema: { type: integer }
+ *       - in: path
+ *         name: id
+ *         required: true
+ *         schema: { type: integer }
+ *     requestBody:
+ *       required: true
+ *       content:
+ *         application/json:
+ *           schema:
+ *             type: object
+ *             required: [status]
+ *             properties:
+ *               status: { type: string, enum: [pending, approved, scheduled, paid, overdue, canceled] }
+ *               paid_at: { type: string, format: date-time }
+ *               conciliated_by: { type: string, enum: [system, manual, gpt] }
+ *               conciliated_at: { type: string, format: date-time }
+ *     responses:
+ *       200:
+ *         description: Título atualizado
+ */
+router.patch('/:storeId/payables/:id/status', authenticateToken, requireRole('admin', 'master'), [
+  body('status').isIn(['pending','approved','scheduled','paid','overdue','canceled']),
+  body('paid_at').optional().isISO8601(),
+  body('conciliated_by').optional().isIn(['system','manual','gpt']),
+  body('conciliated_at').optional().isISO8601()
+], async (req, res) => {
+  const errors = validationResult(req);
+  if (!errors.isEmpty()) return res.status(400).json({ error: 'Validation error', details: errors.array() });
+  try {
+    const { storeId, id } = req.params;
+    const store = await Store.findByPk(storeId);
+    if (!store) return res.status(404).json({ error: 'Not Found', message: 'Loja não encontrada' });
+    if (req.user.role !== 'master' && store.owner_id !== req.user.userId) return res.status(403).json({ error: 'Access denied', message: 'Acesso negado' });
+    const payable = await ApPayable.findOne({ where: { id, store_id: store.id } });
+    if (!payable) return res.status(404).json({ error: 'Not Found', message: 'Título não encontrado' });
+    const { status, paid_at, conciliated_by, conciliated_at } = req.body || {};
+    const update = { status };
+    if (status === 'paid' && !paid_at) update.paid_at = new Date();
+    if (paid_at) update.paid_at = new Date(paid_at);
+    if (conciliated_by) update.conciliated_by = conciliated_by;
+    if (conciliated_at) update.conciliated_at = new Date(conciliated_at);
+    await payable.update(update);
+    return res.json({ success: true, data: payable });
+  } catch (error) {
+    console.error('Update payable status error:', error);
+    return res.status(500).json({ error: 'Internal server error', message: 'Erro interno do servidor' });
+  }
+});
+
+/**
+ * @swagger
+ * /api/v1/stores/{storeId}/payables/{id}/payments:
+ *   post:
+ *     summary: Registrar pagamento do título
+ *     tags: [Accounts Payable]
+ *     security:
+ *       - bearerAuth: []
+ *     parameters:
+ *       - in: path
+ *         name: storeId
+ *         required: true
+ *         schema: { type: integer }
+ *       - in: path
+ *         name: id
+ *         required: true
+ *         schema: { type: integer }
+ *     requestBody:
+ *       required: true
+ *       content:
+ *         application/json:
+ *           schema:
+ *             type: object
+ *             required: [amount, paid_at, method]
+ *             properties:
+ *               amount: { type: number }
+ *               paid_at: { type: string, format: date-time }
+ *               method: { type: string, enum: [pix, bank_transfer, cash, card] }
+ *               notes: { type: string }
+ *     responses:
+ *       201:
+ *         description: Pagamento registrado
+ */
+router.post('/:storeId/payables/:id/payments', authenticateToken, requireRole('admin', 'master'), [
+  body('amount').isFloat({ min: 0 }),
+  body('paid_at').isISO8601(),
+  body('method').isIn(['pix','bank_transfer','cash','card']),
+  body('notes').optional().isString()
+], async (req, res) => {
+  const errors = validationResult(req);
+  if (!errors.isEmpty()) return res.status(400).json({ error: 'Validation error', details: errors.array() });
+  try {
+    const { storeId, id } = req.params;
+    const store = await Store.findByPk(storeId);
+    if (!store) return res.status(404).json({ error: 'Not Found', message: 'Loja não encontrada' });
+    if (req.user.role !== 'master' && store.owner_id !== req.user.userId) return res.status(403).json({ error: 'Access denied', message: 'Acesso negado' });
+    const payable = await ApPayable.findOne({ where: { id, store_id: store.id } });
+    if (!payable) return res.status(404).json({ error: 'Not Found', message: 'Título não encontrado' });
+    const { amount, paid_at, method, notes } = req.body || {};
+    const payment = await ApPayment.create({ payable_id: payable.id, amount, paid_at: new Date(paid_at), method, notes, created_by_user_id: req.user.userId });
+    const totalPaid = await ApPayment.sum('amount', { where: { payable_id: payable.id } });
+    if (totalPaid >= Number(payable.amount)) {
+      await payable.update({ status: 'paid', paid_at: payable.paid_at || new Date(paid_at) });
+    }
+    return res.status(201).json({ success: true, data: { payment, payable_status: payable.status, total_paid: totalPaid } });
+  } catch (error) {
+    console.error('Register payment error:', error);
+    return res.status(500).json({ error: 'Internal server error', message: 'Erro interno do servidor' });
+  }
+});
 
 module.exports = router; 

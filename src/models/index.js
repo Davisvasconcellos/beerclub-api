@@ -23,6 +23,9 @@ const EventJamSong = require('./EventJamSong');
 const EventJamSongInstrumentSlot = require('./EventJamSongInstrumentSlot');
 const EventJamSongCandidate = require('./EventJamSongCandidate');
 const EventJamSongRating = require('./EventJamSongRating');
+const ApVendor = require('./ApVendor');
+const ApPayable = require('./ApPayable');
+const ApPayment = require('./ApPayment');
 
 // Define associations
 
@@ -33,6 +36,22 @@ User.belongsTo(Plan, { foreignKey: 'plan_id', as: 'plan' });
 // Store associations
 Store.hasMany(Product, { foreignKey: 'store_id', as: 'products' });
 Product.belongsTo(Store, { foreignKey: 'store_id', as: 'store' });
+
+// Accounts Payable associations
+Store.hasMany(ApVendor, { foreignKey: 'store_id', as: 'apVendors' });
+ApVendor.belongsTo(Store, { foreignKey: 'store_id', as: 'store' });
+
+Store.hasMany(ApPayable, { foreignKey: 'store_id', as: 'apPayables' });
+ApPayable.belongsTo(Store, { foreignKey: 'store_id', as: 'store' });
+
+ApVendor.hasMany(ApPayable, { foreignKey: 'vendor_id', as: 'payables' });
+ApPayable.belongsTo(ApVendor, { foreignKey: 'vendor_id', as: 'vendor' });
+
+ApPayable.hasMany(ApPayment, { foreignKey: 'payable_id', as: 'payments' });
+ApPayment.belongsTo(ApPayable, { foreignKey: 'payable_id', as: 'payable' });
+
+ApPayment.belongsTo(User, { foreignKey: 'created_by_user_id', as: 'createdBy' });
+User.hasMany(ApPayment, { foreignKey: 'created_by_user_id', as: 'createdApPayments' });
 
 Store.hasMany(Order, { foreignKey: 'store_id', as: 'orders' });
 Order.belongsTo(Store, { foreignKey: 'store_id', as: 'store' });
@@ -162,4 +181,7 @@ module.exports = {
   ,EventJamSongInstrumentSlot
   ,EventJamSongCandidate
   ,EventJamSongRating
+  ,ApVendor
+  ,ApPayable
+  ,ApPayment
 };
