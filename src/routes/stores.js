@@ -1,6 +1,6 @@
 const express = require('express');
 const { body, validationResult } = require('express-validator');
-const { sequelize, Store, User, Product, StoreUser, StoreSchedule } = require('../models');
+const { sequelize, Store, User, Product, StoreUser, StoreSchedule, FinVendor, FinCustomer, FinAccountsPayable, FinAccountsReceivable, FinPayment } = require('../models');
 const { authenticateToken, requireRole } = require('../middlewares/auth');
 
 const router = express.Router();
@@ -844,4 +844,547 @@ router.put('/:id_code/schedule',
  *         description: Pagamento registrado
  */
 
-module.exports = router; 
+/**
+ * @swagger
+ * /api/v1/stores/{id_code}/fin/vendors:
+ *   get:
+ *     summary: Listar fornecedores da loja
+ *     tags: [Finance]
+ *     security:
+ *       - bearerAuth: []
+ *     parameters:
+ *       - in: path
+ *         name: id_code
+ *         required: true
+ *         schema: { type: string }
+ *       - in: query
+ *         name: page
+ *         schema: { type: integer }
+ *       - in: query
+ *         name: limit
+ *         schema: { type: integer }
+ *       - in: query
+ *         name: search
+ *         schema: { type: string }
+ *     responses:
+ *       200:
+ *         description: Lista de fornecedores
+ */
+router.get('/:id_code/fin/vendors', authenticateToken, async (req, res) => {
+  try {
+    const { id_code } = req.params;
+    const { page = 1, limit = 10, search } = req.query;
+    const store = await Store.findOne({ where: { id_code } });
+    if (!store) return res.status(404).json({ error: 'Not Found', message: 'Loja não encontrada' });
+
+    const where = { store_id: store.id };
+    if (search) where.name = { [require('sequelize').Op.like]: `%${search}%` };
+
+    const { count, rows } = await FinVendor.findAndCountAll({
+      where,
+      limit: parseInt(limit),
+      offset: (page - 1) * limit,
+      order: [['created_at', 'DESC']]
+    });
+
+    res.json({ success: true, data: { vendors: rows, pagination: { page: parseInt(page), limit: parseInt(limit), total: count, pages: Math.ceil(count / limit) } } });
+  } catch (error) {
+    console.error('List vendors error:', error);
+    res.status(500).json({ error: 'Internal server error', message: 'Erro interno do servidor' });
+  }
+});
+
+/**
+ * @swagger
+ * /api/v1/stores/{id_code}/fin/vendors:
+ *   post:
+ *     summary: Criar fornecedor
+ *     tags: [Finance]
+ *     security:
+ *       - bearerAuth: []
+ *     parameters:
+ *       - in: path
+ *         name: id_code
+ *         required: true
+ *         schema: { type: string }
+ *     requestBody:
+ *       required: true
+ *       content:
+ *         application/json:
+ *           schema:
+ *             type: object
+ *             required: [name]
+ *     responses:
+ *       201:
+ *         description: Fornecedor criado
+ */
+router.post('/:id_code/fin/vendors', authenticateToken, requireRole(['admin']), [
+  body('name').isString().isLength({ min: 1, max: 255 }),
+  body('email').optional().isEmail(),
+  body('document').optional().isString(),
+  body('phone').optional().isString(),
+  body('bank_info').optional().isObject()
+], async (req, res) => {
+  const t = await sequelize.transaction();
+  try {
+    const errors = validationResult(req);
+    if (!errors.isEmpty()) return res.status(400).json({ error: 'Validation error', details: errors.array() });
+    const { id_code } = req.params;
+    const store = await Store.findOne({ where: { id_code } });
+    if (!store) return res.status(404).json({ error: 'Not Found', message: 'Loja não encontrada' });
+
+    const vendor = await FinVendor.create({
+      store_id: store.id,
+      name: req.body.name,
+      email: req.body.email,
+      document: req.body.document,
+      phone: req.body.phone,
+      bank_info: req.body.bank_info
+    }, { transaction: t });
+
+    await t.commit();
+    res.status(201).json({ success: true, data: vendor });
+  } catch (error) {
+    await t.rollback();
+    console.error('Create vendor error:', error);
+    res.status(500).json({ error: 'Internal server error', message: 'Erro interno do servidor' });
+  }
+});
+
+/**
+ * @swagger
+ * /api/v1/stores/{id_code}/fin/customers:
+ *   get:
+ *     summary: Listar clientes financeiros da loja
+ *     tags: [Finance]
+ *     security:
+ *       - bearerAuth: []
+ *     parameters:
+ *       - in: path
+ *         name: id_code
+ *         required: true
+ *         schema: { type: string }
+ *       - in: query
+ *         name: page
+ *         schema: { type: integer }
+ *       - in: query
+ *         name: limit
+ *         schema: { type: integer }
+ *       - in: query
+ *         name: search
+ *         schema: { type: string }
+ *     responses:
+ *       200:
+ *         description: Lista de clientes
+ */
+router.get('/:id_code/fin/customers', authenticateToken, async (req, res) => {
+  try {
+    const { id_code } = req.params;
+    const { page = 1, limit = 10, search } = req.query;
+    const store = await Store.findOne({ where: { id_code } });
+    if (!store) return res.status(404).json({ error: 'Not Found', message: 'Loja não encontrada' });
+
+    const where = { store_id: store.id };
+    if (search) where.name = { [require('sequelize').Op.like]: `%${search}%` };
+
+    const { count, rows } = await FinCustomer.findAndCountAll({
+      where,
+      limit: parseInt(limit),
+      offset: (page - 1) * limit,
+      order: [['created_at', 'DESC']]
+    });
+
+    res.json({ success: true, data: { customers: rows, pagination: { page: parseInt(page), limit: parseInt(limit), total: count, pages: Math.ceil(count / limit) } } });
+  } catch (error) {
+    console.error('List customers error:', error);
+    res.status(500).json({ error: 'Internal server error', message: 'Erro interno do servidor' });
+  }
+});
+
+/**
+ * @swagger
+ * /api/v1/stores/{id_code}/fin/customers:
+ *   post:
+ *     summary: Criar cliente financeiro
+ *     tags: [Finance]
+ *     security:
+ *       - bearerAuth: []
+ *     parameters:
+ *       - in: path
+ *         name: id_code
+ *         required: true
+ *         schema: { type: string }
+ *     requestBody:
+ *       required: true
+ *       content:
+ *         application/json:
+ *           schema:
+ *             type: object
+ *             required: [name]
+ *     responses:
+ *       201:
+ *         description: Cliente criado
+ */
+router.post('/:id_code/fin/customers', authenticateToken, requireRole(['admin']), [
+  body('name').isString().isLength({ min: 1, max: 255 }),
+  body('email').optional().isEmail(),
+  body('document').optional().isString(),
+  body('phone').optional().isString()
+], async (req, res) => {
+  const t = await sequelize.transaction();
+  try {
+    const errors = validationResult(req);
+    if (!errors.isEmpty()) return res.status(400).json({ error: 'Validation error', details: errors.array() });
+    const { id_code } = req.params;
+    const store = await Store.findOne({ where: { id_code } });
+    if (!store) return res.status(404).json({ error: 'Not Found', message: 'Loja não encontrada' });
+
+    const customer = await FinCustomer.create({
+      store_id: store.id,
+      name: req.body.name,
+      email: req.body.email,
+      document: req.body.document,
+      phone: req.body.phone
+    }, { transaction: t });
+
+    await t.commit();
+    res.status(201).json({ success: true, data: customer });
+  } catch (error) {
+    await t.rollback();
+    console.error('Create customer error:', error);
+    res.status(500).json({ error: 'Internal server error', message: 'Erro interno do servidor' });
+  }
+});
+
+/**
+ * @swagger
+ * /api/v1/stores/{id_code}/fin/payables:
+ *   get:
+ *     summary: Listar contas a pagar
+ *     tags: [Accounts Payable]
+ *     security:
+ *       - bearerAuth: []
+ *     parameters:
+ *       - in: path
+ *         name: id_code
+ *         required: true
+ *         schema: { type: string }
+ *       - in: query
+ *         name: status
+ *         schema: { type: string }
+ *       - in: query
+ *         name: page
+ *         schema: { type: integer }
+ *       - in: query
+ *         name: limit
+ *         schema: { type: integer }
+ *     responses:
+ *       200:
+ *         description: Lista de contas a pagar
+ */
+router.get('/:id_code/fin/payables', authenticateToken, async (req, res) => {
+  try {
+    const { id_code } = req.params;
+    const { page = 1, limit = 10, status } = req.query;
+    const store = await Store.findOne({ where: { id_code } });
+    if (!store) return res.status(404).json({ error: 'Not Found', message: 'Loja não encontrada' });
+
+    const where = { store_id: store.id };
+    if (status) where.status = status;
+
+    const { count, rows } = await FinAccountsPayable.findAndCountAll({
+      where,
+      include: [{ model: FinVendor, as: 'vendor', attributes: ['id', 'name'] }],
+      limit: parseInt(limit),
+      offset: (page - 1) * limit,
+      order: [['due_date', 'ASC']]
+    });
+
+    res.json({ success: true, data: { payables: rows, pagination: { page: parseInt(page), limit: parseInt(limit), total: count, pages: Math.ceil(count / limit) } } });
+  } catch (error) {
+    console.error('List payables error:', error);
+    res.status(500).json({ error: 'Internal server error', message: 'Erro interno do servidor' });
+  }
+});
+
+/**
+ * @swagger
+ * /api/v1/stores/{id_code}/fin/payables:
+ *   post:
+ *     summary: Criar conta a pagar
+ *     tags: [Accounts Payable]
+ *     security:
+ *       - bearerAuth: []
+ *     parameters:
+ *       - in: path
+ *         name: id_code
+ *         required: true
+ *         schema: { type: string }
+ *     requestBody:
+ *       required: true
+ *       content:
+ *         application/json:
+ *           schema:
+ *             type: object
+ *             required: [vendor_id, invoice_number, amount, due_date]
+ *     responses:
+ *       201:
+ *         description: Título criado
+ */
+router.post('/:id_code/fin/payables', authenticateToken, requireRole(['admin']), [
+  body('vendor_id').isInt({ min: 1 }),
+  body('invoice_number').isString().isLength({ min: 1, max: 64 }),
+  body('amount').isDecimal(),
+  body('currency').optional().isString().isLength({ min: 3, max: 3 }),
+  body('issue_date').optional().isISO8601(),
+  body('due_date').isISO8601(),
+  body('description').optional().isString(),
+  body('category').optional().isString(),
+  body('cost_center').optional().isString(),
+  body('attachment_url').optional().isURL({ require_tld: false })
+], async (req, res) => {
+  const t = await sequelize.transaction();
+  try {
+    const errors = validationResult(req);
+    if (!errors.isEmpty()) return res.status(400).json({ error: 'Validation error', details: errors.array() });
+
+    const { id_code } = req.params;
+    const store = await Store.findOne({ where: { id_code } });
+    if (!store) return res.status(404).json({ error: 'Not Found', message: 'Loja não encontrada' });
+
+    const vendor = await FinVendor.findByPk(req.body.vendor_id);
+    if (!vendor || vendor.store_id !== store.id) return res.status(400).json({ error: 'Validation error', message: 'Fornecedor inválido para esta loja' });
+
+    const payable = await FinAccountsPayable.create({
+      store_id: store.id,
+      vendor_id: vendor.id,
+      invoice_number: req.body.invoice_number,
+      description: req.body.description,
+      amount: req.body.amount,
+      currency: req.body.currency || 'BRL',
+      issue_date: req.body.issue_date,
+      due_date: req.body.due_date,
+      status: 'pending',
+      category: req.body.category,
+      cost_center: req.body.cost_center,
+      created_by: req.user.userId,
+      attachment_url: req.body.attachment_url
+    }, { transaction: t });
+
+    await t.commit();
+    res.status(201).json({ success: true, data: payable });
+  } catch (error) {
+    await t.rollback();
+    console.error('Create payable error:', error);
+    res.status(500).json({ error: 'Internal server error', message: 'Erro interno do servidor' });
+  }
+});
+
+/**
+ * @swagger
+ * /api/v1/stores/{id_code}/fin/receivables:
+ *   get:
+ *     summary: Listar contas a receber
+ *     tags: [Accounts Receivable]
+ *     security:
+ *       - bearerAuth: []
+ *     parameters:
+ *       - in: path
+ *         name: id_code
+ *         required: true
+ *         schema: { type: string }
+ *       - in: query
+ *         name: status
+ *         schema: { type: string }
+ *       - in: query
+ *         name: page
+ *         schema: { type: integer }
+ *       - in: query
+ *         name: limit
+ *         schema: { type: integer }
+ *     responses:
+ *       200:
+ *         description: Lista de contas a receber
+ */
+router.get('/:id_code/fin/receivables', authenticateToken, async (req, res) => {
+  try {
+    const { id_code } = req.params;
+    const { page = 1, limit = 10, status } = req.query;
+    const store = await Store.findOne({ where: { id_code } });
+    if (!store) return res.status(404).json({ error: 'Not Found', message: 'Loja não encontrada' });
+
+    const where = { store_id: store.id };
+    if (status) where.status = status;
+
+    const { count, rows } = await FinAccountsReceivable.findAndCountAll({
+      where,
+      include: [{ model: FinCustomer, as: 'customer', attributes: ['id', 'name'] }],
+      limit: parseInt(limit),
+      offset: (page - 1) * limit,
+      order: [['due_date', 'ASC']]
+    });
+
+    res.json({ success: true, data: { receivables: rows, pagination: { page: parseInt(page), limit: parseInt(limit), total: count, pages: Math.ceil(count / limit) } } });
+  } catch (error) {
+    console.error('List receivables error:', error);
+    res.status(500).json({ error: 'Internal server error', message: 'Erro interno do servidor' });
+  }
+});
+
+/**
+ * @swagger
+ * /api/v1/stores/{id_code}/fin/receivables:
+ *   post:
+ *     summary: Criar conta a receber
+ *     tags: [Accounts Receivable]
+ *     security:
+ *       - bearerAuth: []
+ *     parameters:
+ *       - in: path
+ *         name: id_code
+ *         required: true
+ *         schema: { type: string }
+ *     requestBody:
+ *       required: true
+ *       content:
+ *         application/json:
+ *           schema:
+ *             type: object
+ *             required: [customer_id, invoice_number, amount, due_date]
+ *     responses:
+ *       201:
+ *         description: Título criado
+ */
+router.post('/:id_code/fin/receivables', authenticateToken, requireRole(['admin']), [
+  body('customer_id').isInt({ min: 1 }),
+  body('invoice_number').isString().isLength({ min: 1, max: 64 }),
+  body('amount').isDecimal(),
+  body('currency').optional().isString().isLength({ min: 3, max: 3 }),
+  body('issue_date').optional().isISO8601(),
+  body('due_date').isISO8601(),
+  body('description').optional().isString(),
+  body('commission_rate').optional().isDecimal(),
+  body('salesperson_id').optional().isInt({ min: 1 }),
+  body('attachment_url').optional().isURL({ require_tld: false })
+], async (req, res) => {
+  const t = await sequelize.transaction();
+  try {
+    const errors = validationResult(req);
+    if (!errors.isEmpty()) return res.status(400).json({ error: 'Validation error', details: errors.array() });
+
+    const { id_code } = req.params;
+    const store = await Store.findOne({ where: { id_code } });
+    if (!store) return res.status(404).json({ error: 'Not Found', message: 'Loja não encontrada' });
+
+    const customer = await FinCustomer.findByPk(req.body.customer_id);
+    if (!customer || customer.store_id !== store.id) return res.status(400).json({ error: 'Validation error', message: 'Cliente inválido para esta loja' });
+
+    const receivable = await FinAccountsReceivable.create({
+      store_id: store.id,
+      customer_id: customer.id,
+      invoice_number: req.body.invoice_number,
+      description: req.body.description,
+      amount: req.body.amount,
+      currency: req.body.currency || 'BRL',
+      issue_date: req.body.issue_date,
+      due_date: req.body.due_date,
+      status: 'pending',
+      salesperson_id: req.body.salesperson_id,
+      commission_rate: req.body.commission_rate,
+      created_by: req.user.userId,
+      attachment_url: req.body.attachment_url
+    }, { transaction: t });
+
+    await t.commit();
+    res.status(201).json({ success: true, data: receivable });
+  } catch (error) {
+    await t.rollback();
+    console.error('Create receivable error:', error);
+    res.status(500).json({ error: 'Internal server error', message: 'Erro interno do servidor' });
+  }
+});
+
+/**
+ * @swagger
+ * /api/v1/stores/{id_code}/fin/payments:
+ *   post:
+ *     summary: Registrar pagamento financeiro
+ *     tags: [Finance]
+ *     security:
+ *       - bearerAuth: []
+ *     parameters:
+ *       - in: path
+ *         name: id_code
+ *         required: true
+ *         schema: { type: string }
+ *     requestBody:
+ *       required: true
+ *       content:
+ *         application/json:
+ *           schema:
+ *             type: object
+ *             required: [amount, paid_at, method]
+ *     responses:
+ *       201:
+ *         description: Pagamento registrado
+ */
+router.post('/:id_code/fin/payments', authenticateToken, requireRole(['admin']), [
+  body('payable_id').optional().isInt({ min: 1 }),
+  body('receivable_id').optional().isInt({ min: 1 }),
+  body('amount').isDecimal(),
+  body('paid_at').isISO8601(),
+  body('method').isIn(['pix', 'bank_transfer', 'cash', 'card', 'deposit']),
+  body('notes').optional().isString()
+], async (req, res) => {
+  const t = await sequelize.transaction();
+  try {
+    const errors = validationResult(req);
+    if (!errors.isEmpty()) return res.status(400).json({ error: 'Validation error', details: errors.array() });
+
+    const { id_code } = req.params;
+    const store = await Store.findOne({ where: { id_code } });
+    if (!store) return res.status(404).json({ error: 'Not Found', message: 'Loja não encontrada' });
+
+    if (!req.body.payable_id && !req.body.receivable_id) {
+      return res.status(400).json({ error: 'Validation error', message: 'Informe payable_id ou receivable_id' });
+    }
+
+    let target;
+    let targetType;
+    if (req.body.payable_id) {
+      target = await FinAccountsPayable.findByPk(req.body.payable_id, { transaction: t });
+      targetType = 'payable';
+      if (!target || target.store_id !== store.id) return res.status(400).json({ error: 'Validation error', message: 'Título a pagar inválido para esta loja' });
+    }
+    if (req.body.receivable_id) {
+      target = await FinAccountsReceivable.findByPk(req.body.receivable_id, { transaction: t });
+      targetType = 'receivable';
+      if (!target || target.store_id !== store.id) return res.status(400).json({ error: 'Validation error', message: 'Título a receber inválido para esta loja' });
+    }
+
+    const payment = await FinPayment.create({
+      payable_id: req.body.payable_id || null,
+      receivable_id: req.body.receivable_id || null,
+      amount: req.body.amount,
+      paid_at: req.body.paid_at,
+      method: req.body.method,
+      notes: req.body.notes,
+      created_by: req.user.userId
+    }, { transaction: t });
+
+    if (targetType === 'payable') {
+      await target.update({ status: 'paid', paid_at: req.body.paid_at }, { transaction: t });
+    } else if (targetType === 'receivable') {
+      await target.update({ status: 'paid', paid_at: req.body.paid_at }, { transaction: t });
+    }
+
+    await t.commit();
+    res.status(201).json({ success: true, data: payment });
+  } catch (error) {
+    await t.rollback();
+    console.error('Create payment error:', error);
+    res.status(500).json({ error: 'Internal server error', message: 'Erro interno do servidor' });
+  }
+});
+
+module.exports = router;

@@ -23,6 +23,11 @@ const EventJamSong = require('./EventJamSong');
 const EventJamSongInstrumentSlot = require('./EventJamSongInstrumentSlot');
 const EventJamSongCandidate = require('./EventJamSongCandidate');
 const EventJamSongRating = require('./EventJamSongRating');
+const FinVendor = require('./FinVendor');
+const FinCustomer = require('./FinCustomer');
+const FinAccountsPayable = require('./FinAccountsPayable');
+const FinAccountsReceivable = require('./FinAccountsReceivable');
+const FinPayment = require('./FinPayment');
 
 // Define associations
 
@@ -136,8 +141,40 @@ EventJamSong.hasMany(EventJamSongRating, { foreignKey: 'jam_song_id', as: 'ratin
 EventJamSongRating.belongsTo(EventJamSong, { foreignKey: 'jam_song_id', as: 'song' });
 EventJamSongRating.belongsTo(User, { foreignKey: 'user_id', as: 'user' });
 User.hasMany(EventJamSongRating, { foreignKey: 'user_id', as: 'jamSongRatings' });
-EventJamSongRating.belongsTo(EventGuest, { foreignKey: 'event_guest_id', as: 'guest' });
+// EventJamSongRating.belongsTo(EventGuest, { foreignKey: 'event_guest_id', as: 'guest' });
 EventGuest.hasMany(EventJamSongRating, { foreignKey: 'event_guest_id', as: 'jamSongRatings' });
+
+// Financial associations
+Store.hasMany(FinVendor, { foreignKey: 'store_id', as: 'finVendors' });
+FinVendor.belongsTo(Store, { foreignKey: 'store_id', as: 'store' });
+
+Store.hasMany(FinCustomer, { foreignKey: 'store_id', as: 'finCustomers' });
+FinCustomer.belongsTo(Store, { foreignKey: 'store_id', as: 'store' });
+
+FinVendor.hasMany(FinAccountsPayable, { foreignKey: 'vendor_id', as: 'payables' });
+FinAccountsPayable.belongsTo(FinVendor, { foreignKey: 'vendor_id', as: 'vendor' });
+Store.hasMany(FinAccountsPayable, { foreignKey: 'store_id', as: 'payables' });
+FinAccountsPayable.belongsTo(Store, { foreignKey: 'store_id', as: 'store' });
+User.hasMany(FinAccountsPayable, { foreignKey: 'created_by', as: 'createdPayables' });
+FinAccountsPayable.belongsTo(User, { foreignKey: 'created_by', as: 'creator' });
+User.hasMany(FinAccountsPayable, { foreignKey: 'approved_by', as: 'approvedPayables' });
+FinAccountsPayable.belongsTo(User, { foreignKey: 'approved_by', as: 'approver' });
+
+FinCustomer.hasMany(FinAccountsReceivable, { foreignKey: 'customer_id', as: 'receivables' });
+FinAccountsReceivable.belongsTo(FinCustomer, { foreignKey: 'customer_id', as: 'customer' });
+Store.hasMany(FinAccountsReceivable, { foreignKey: 'store_id', as: 'receivables' });
+FinAccountsReceivable.belongsTo(Store, { foreignKey: 'store_id', as: 'store' });
+User.hasMany(FinAccountsReceivable, { foreignKey: 'created_by', as: 'createdReceivables' });
+FinAccountsReceivable.belongsTo(User, { foreignKey: 'created_by', as: 'creator' });
+User.hasMany(FinAccountsReceivable, { foreignKey: 'salesperson_id', as: 'salespersonReceivables' });
+FinAccountsReceivable.belongsTo(User, { foreignKey: 'salesperson_id', as: 'salesperson' });
+
+FinAccountsPayable.hasMany(FinPayment, { foreignKey: 'payable_id', as: 'payments' });
+FinPayment.belongsTo(FinAccountsPayable, { foreignKey: 'payable_id', as: 'payable' });
+FinAccountsReceivable.hasMany(FinPayment, { foreignKey: 'receivable_id', as: 'payments' });
+FinPayment.belongsTo(FinAccountsReceivable, { foreignKey: 'receivable_id', as: 'receivable' });
+User.hasMany(FinPayment, { foreignKey: 'created_by', as: 'createdPayments' });
+FinPayment.belongsTo(User, { foreignKey: 'created_by', as: 'creator' });
 
 module.exports = {
   sequelize,
@@ -163,4 +200,9 @@ module.exports = {
   ,EventJamSongInstrumentSlot
   ,EventJamSongCandidate
   ,EventJamSongRating
+  ,FinVendor
+  ,FinCustomer
+  ,FinAccountsPayable
+  ,FinAccountsReceivable
+  ,FinPayment
 };
