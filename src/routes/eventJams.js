@@ -356,7 +356,7 @@ router.get('/:id/jams/open', authenticateToken, async (req, res) => {
   const songs = await EventJamSong.findAll({ where: { jam_id: { [Op.in]: jamIds }, status: 'open_for_candidates' }, order: [['order_index', 'ASC']], include: [{ model: EventJamSongInstrumentSlot, as: 'instrumentSlots' }, { model: EventJamSongCandidate, as: 'candidates' }, { model: EventJamSongRating, as: 'ratings' }] });
 
   const jamsById = jams.reduce((acc, j) => { acc[j.id] = { id: j.id, name: j.name, status: j.status }; return acc; }, {});
-  const data = songs.map(song => {
+  const data = songs.map((song, index) => {
     const slots = (song.instrumentSlots || []).map(s => {
       const approved = (song.candidates || []).filter(c => c.instrument === s.instrument && c.status === 'approved').length;
       const pending = (song.candidates || []).filter(c => c.instrument === s.instrument && c.status === 'pending').length;
@@ -367,7 +367,7 @@ router.get('/:id/jams/open', authenticateToken, async (req, res) => {
     const requiredCount = slots.filter(s => s.required).length;
     const approvedRequired = slots.filter(s => s.required).reduce((a, s) => a + (s.approved_count > 0 ? 1 : 0), 0);
     const myApp = (song.candidates || []).find(c => c.event_guest_id === guest.id) || null;
-    return { jam: jamsById[song.jam_id] || { id: song.jam_id }, id: song.id, jam_id: song.jam_id, title: song.title, artist: song.artist, status: song.status, ready: !!song.ready, order_index: song.order_index, release_batch: song.release_batch, instrument_slots: slots, my_application: myApp ? { instrument: myApp.instrument, status: myApp.status } : null, lineup_completeness: { required_instruments: requiredCount, approved_required: approvedRequired, is_full: approvedRequired === requiredCount }, rating_summary: ratings.length ? { average: Number(avg.toFixed(2)), count: ratings.length } : null };
+    return { jam: jamsById[song.jam_id] || { id: song.jam_id }, id: song.id, jam_id: song.jam_id, title: song.title, artist: song.artist, status: song.status, ready: !!song.ready, order_index: song.order_index, queue_position: index + 1, release_batch: song.release_batch, instrument_slots: slots, my_application: myApp ? { instrument: myApp.instrument, status: myApp.status } : null, lineup_completeness: { required_instruments: requiredCount, approved_required: approvedRequired, is_full: approvedRequired === requiredCount }, rating_summary: ratings.length ? { average: Number(avg.toFixed(2)), count: ratings.length } : null };
   });
   return res.json({ success: true, data });
 });
