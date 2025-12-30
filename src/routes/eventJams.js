@@ -380,14 +380,98 @@ router.get('/:id/jams/my/on-stage', authenticateToken, async (req, res) => {
   if (!guest || !guest.check_in_at) return res.status(403).json({ error: 'Access denied', message: 'Check-in obrigatório para visualizar' });
   const jams = await EventJam.findAll({ where: { event_id: event.id } });
   const jamIds = jams.map(j => j.id);
-  const songs = await EventJamSong.findAll({ where: { jam_id: { [Op.in]: jamIds }, status: 'on_stage' }, order: [['order_index', 'ASC']], include: [{ model: EventJamSongInstrumentSlot, as: 'instrumentSlots' }, { model: EventJamSongCandidate, as: 'candidates' }] });
+  // Busca a fila global completa
+  const globalQueue = await EventJamSong.findAll({
+    where: { jam_id: { [Op.in]: jamIds }, status: { [Op.in]: ['open_for_candidates', 'on_stage'] } },
+    order: [['order_index', 'ASC']],
+    include: [
+      { model: EventJamSongInstrumentSlot, as: 'instrumentSlots' },
+      { model: EventJamSongCandidate, as: 'candidates' }
+    ]
+  });
+
   const jamsById = jams.reduce((acc, j) => { acc[j.id] = { id: j.id, name: j.name, status: j.status }; return acc; }, {});
-  const data = songs.map(song => {
+
+  const formatSong = (song, index) => {
     const myApp = (song.candidates || []).find(c => c.event_guest_id === guest.id && c.status === 'approved') || null;
-    if (!myApp) return null;
     const slots = (song.instrumentSlots || []).map(s => ({ instrument: s.instrument, slots: s.slots, required: s.required, fallback_allowed: s.fallback_allowed }));
-    return { jam: jamsById[song.jam_id] || { id: song.jam_id }, id: song.id, title: song.title, artist: song.artist, status: song.status, instrument_slots: slots, my_application: { instrument: myApp.instrument, status: myApp.status } };
+    return {
+      jam: jamsById[song.jam_id] || { id: song.jam_id },
+      id: song.id,
+      title: song.title,
+      artist: song.artist,
+      status: song.status,
+      queue_position: index,
+      instrument_slots: slots,
+      my_application: myApp ? { instrument: myApp.instrument, status: myApp.status } : null
+    };
+  };
+
+  const nowPlaying = globalQueue.length > 0 ? formatSong(globalQueue[0], 1) : null;
+  const myUpcoming = globalQueue.map((s, i) => {
+    // Pula a primeira se já for nowPlaying
+    if (i === 0) return null;
+    // Verifica se é minha
+    const isMine = (s.candidates || []).some(c => c.event_guest_id === guest.id && c.status === 'approved');
+    if (!isMine) return null;
+    return formatSong(s, i + 1);
   }).filter(Boolean);
+
+  return res.json({ success: true, data: { now_playing: nowPlaying, my_upcoming: myUpcoming } });
+});
+
+router.get('/:id/jams/playlist', authenticateToken, async (req, res) => {
+  const { id } = req.params;
+  const event = await Event.findOne({ where: { id_code: id } });
+  if (!event) return res.status(404).json({ error: 'Not Found', message: 'Evento não encontrado' });
+  
+  const guest = await EventGuest.findOne({ where: { event_id: event.id, user_id: req.user.userId } });
+  if (!guest || !guest.check_in_at) return res.status(403).json({ error: 'Access denied', message: 'Check-in obrigatório para visualizar' });
+
+  const jams = await EventJam.findAll({ where: { event_id: event.id } });
+  const jamIds = jams.map(j => j.id);
+
+  const songs = await EventJamSong.findAll({
+    where: { 
+      jam_id: { [Op.in]: jamIds }, 
+      status: 'on_stage' 
+    },
+    order: [['order_index', 'ASC']],
+    include: [
+      { 
+        model: EventJamSongCandidate, 
+        as: 'candidates', 
+        where: { status: 'approved' },
+        required: false, // Include song even if no candidates approved yet
+        include: [{ model: EventGuest, as: 'guest', include: [{ model: User, as: 'user', attributes: ['name', 'avatar_url'] }] }]
+      }
+    ]
+  });
+
+  const jamsById = jams.reduce((acc, j) => { acc[j.id] = { id: j.id, name: j.name, status: j.status }; return acc; }, {});
+
+  const data = songs.map((song, index) => {
+    const musicians = (song.candidates || []).map(c => {
+      const name = c.guest?.user?.name || c.guest?.guest_name || 'Unknown';
+      const avatar_url = c.guest?.user?.avatar_url || null;
+      return { 
+        name, 
+        avatar_url, 
+        instrument: c.instrument 
+      };
+    });
+
+    return {
+      jam: jamsById[song.jam_id] || { id: song.jam_id },
+      id: song.id,
+      title: song.title,
+      artist: song.artist,
+      status: song.status,
+      queue_position: index + 1,
+      musicians
+    };
+  });
+
   return res.json({ success: true, data });
 });
 
