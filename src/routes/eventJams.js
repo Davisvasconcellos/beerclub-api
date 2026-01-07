@@ -382,7 +382,7 @@ router.get('/:id/jams/my/on-stage', authenticateToken, async (req, res) => {
   const jamIds = jams.map(j => j.id);
   // Busca a fila global completa
   const globalQueue = await EventJamSong.findAll({
-    where: { jam_id: { [Op.in]: jamIds }, status: { [Op.in]: ['open_for_candidates', 'on_stage'] } },
+    where: { jam_id: { [Op.in]: jamIds }, status: 'on_stage' },
     order: [['order_index', 'ASC']],
     include: [
       { model: EventJamSongInstrumentSlot, as: 'instrumentSlots' },

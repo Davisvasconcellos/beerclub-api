@@ -32,6 +32,7 @@ const footballTeamsRoutes = require('./routes/footballTeams');
 const eventRoutes = require('./routes/events');
 const eventOpenRoutes = require('./routes/eventsOpen');
 const eventJamsRoutes = require('./routes/eventJams');
+const uploadRoutes = require('./routes/upload');
 
 // Import middleware
 const errorHandler = require('./middlewares/errorHandler');
@@ -229,6 +230,7 @@ app.use('/api/public/v1/events', eventOpenRoutes);
 app.use('/api/v1/events', eventJamsRoutes);
 app.use('/api/events', eventJamsRoutes);
 app.use('/api/public/v1/events', eventJamsRoutes);
+app.use('/api/v1/uploads', uploadRoutes);
 
 // Swagger (apenas dev)
 if (process.env.NODE_ENV === 'development') {
