@@ -143,7 +143,7 @@ router.get('/:id/jams/songs', authenticateToken, requireRole('admin', 'master'),
       const bucket = byInstrument[c.instrument] || (byInstrument[c.instrument] = { instrument: c.instrument, slots: 0, required: false, fallback_allowed: true, approved: [], pending: [] });
       const displayName = c.guest?.user?.name || c.guest?.guest_name || null;
       const email = c.guest?.user?.email || c.guest?.guest_email || null;
-      const avatar_url = c.guest?.user?.avatar_url || null;
+      const avatar_url = c.guest?.selfie_url || c.guest?.user?.avatar_url || null;
       const entry = { candidate_id: c.id, guest_id: c.event_guest_id, display_name: displayName, email, avatar_url, status: c.status };
       if (c.status === 'approved') bucket.approved.push(entry); else bucket.pending.push(entry);
     }
@@ -453,7 +453,8 @@ router.get('/:id/jams/playlist', authenticateToken, async (req, res) => {
   const data = songs.map((song, index) => {
     const musicians = (song.candidates || []).map(c => {
       const name = c.guest?.user?.name || c.guest?.guest_name || 'Unknown';
-      const avatar_url = c.guest?.user?.avatar_url || null;
+      // Prioriza selfie do EventGuest, fallback para avatar do User
+      const avatar_url = c.guest?.selfie_url || c.guest?.user?.avatar_url || null;
       return { 
         name, 
         avatar_url, 
