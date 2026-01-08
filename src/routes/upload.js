@@ -156,11 +156,18 @@ router.post('/', upload.single('file'), async (req, res) => {
     console.log('✅ Arquivo salvo no Drive:', result.name);
 
     // Retorna a URL pública
+    // const publicUrl = `https://drive.usercontent.google.com/download?id=${result.id}&authuser=0`; // Antigo (Link direto Google)
+    
+    // Constrói a URL do Proxy da própria API
+    const apiBaseUrl = process.env.API_PUBLIC_BASE_URL || `http://localhost:${process.env.PORT || 4000}`;
+    const proxyUrl = `${apiBaseUrl}/api/v1/files/${result.id}`;
+
     res.json({
       success: true,
       data: {
         name: result.name,
-        url: result.webViewLink, // Link para visualização
+        url: proxyUrl, // Link Proxy (Seguro + CORS Friendly)
+        fileUrl: result.webViewLink, // Link Original (Google Drive Viewer)
         downloadUrl: result.webContentLink, // Link para download direto
         id: result.id
       }
