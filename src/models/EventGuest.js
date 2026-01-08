@@ -71,6 +71,10 @@ const EventGuest = sequelize.define('EventGuest', {
     type: DataTypes.ENUM('google', 'staff_manual', 'invited_qr', 'auto_checkin'),
     allowNull: true
   },
+  selfie_url: {
+    type: DataTypes.STRING(500),
+    allowNull: true
+  },
   authorized_by_user_id: {
     type: DataTypes.INTEGER,
     allowNull: true
