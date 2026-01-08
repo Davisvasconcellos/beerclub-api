@@ -32,6 +32,8 @@ const footballTeamsRoutes = require('./routes/footballTeams');
 const eventRoutes = require('./routes/events');
 const eventOpenRoutes = require('./routes/eventsOpen');
 const eventJamsRoutes = require('./routes/eventJams');
+const uploadRoutes = require('./routes/upload');
+const filesRoutes = require('./routes/files');
 
 // Import middleware
 const errorHandler = require('./middlewares/errorHandler');
@@ -76,7 +78,9 @@ const swaggerOptions = {
 const specs = swaggerJsdoc(swaggerOptions);
 
 // Security middleware
-app.use(helmet());
+app.use(helmet({
+  crossOriginResourcePolicy: false,
+}));
 
 // CORS configuration
 const parseOrigins = (value) => (value || '')
@@ -229,6 +233,8 @@ app.use('/api/public/v1/events', eventOpenRoutes);
 app.use('/api/v1/events', eventJamsRoutes);
 app.use('/api/events', eventJamsRoutes);
 app.use('/api/public/v1/events', eventJamsRoutes);
+app.use('/api/v1/uploads', uploadRoutes);
+app.use('/api/v1/files', filesRoutes);
 
 // Swagger (apenas dev)
 if (process.env.NODE_ENV === 'development') {

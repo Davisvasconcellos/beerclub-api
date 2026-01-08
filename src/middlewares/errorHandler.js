@@ -67,11 +67,11 @@ const errorHandler = (err, req, res, next) => {
     });
   }
 
-  // Erro de tipo de arquivo não permitido
+  // Erro de campo inválido ou arquivo não esperado
   if (err.code === 'LIMIT_UNEXPECTED_FILE') {
     return res.status(400).json({
-      error: 'Invalid file type',
-      message: 'Tipo de arquivo não permitido'
+      error: 'Unexpected field',
+      message: 'Campo de arquivo inesperado. Verifique se o nome do campo é "file".'
     });
   }
 
