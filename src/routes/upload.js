@@ -18,6 +18,81 @@ const SCOPES = ['https://www.googleapis.com/auth/drive.file'];
 let drive = null;
 let oauth2Client = null;
 
+// Cache simples para evitar chamadas excessivas ao Drive API
+const folderCache = new Map();
+
+/**
+ * Encontra ou cria uma pasta dentro de um pai específico
+ */
+const findOrCreateFolder = async (folderName, parentId) => {
+  const cacheKey = `${parentId || 'root'}/${folderName}`;
+  if (folderCache.has(cacheKey)) {
+    return folderCache.get(cacheKey);
+  }
+
+  // 1. Tentar encontrar a pasta
+  let query = `mimeType='application/vnd.google-apps.folder' and name='${folderName}' and trashed=false`;
+  if (parentId) {
+    query += ` and '${parentId}' in parents`;
+  }
+
+  try {
+    const res = await drive.files.list({
+      q: query,
+      fields: 'files(id, name)',
+      spaces: 'drive',
+    });
+
+    if (res.data.files.length > 0) {
+      const folderId = res.data.files[0].id;
+      folderCache.set(cacheKey, folderId);
+      return folderId;
+    }
+
+    // 2. Se não existir, criar
+    const fileMetadata = {
+      name: folderName,
+      mimeType: 'application/vnd.google-apps.folder',
+    };
+    if (parentId) {
+      fileMetadata.parents = [parentId];
+    }
+
+    const folder = await drive.files.create({
+      resource: fileMetadata,
+      fields: 'id',
+    });
+
+    const newFolderId = folder.data.id;
+    folderCache.set(cacheKey, newFolderId);
+    console.log(`📂 Pasta criada: ${folderName} (ID: ${newFolderId})`);
+    return newFolderId;
+  } catch (error) {
+    console.error(`Erro ao resolver pasta ${folderName}:`, error.message);
+    throw error;
+  }
+};
+
+/**
+ * Resolve um caminho de pastas recursivamente (ex: 'eventos/2024/fotos')
+ * Retorna o ID da última pasta.
+ */
+const resolveFolderPath = async (pathString) => {
+  // Se não foi passado folder ou é 'uploads' genérico, usa a raiz configurada
+  if (!pathString || pathString === 'uploads') {
+    return process.env.GOOGLE_DRIVE_FOLDER_ID;
+  }
+
+  const parts = pathString.split('/').filter(p => p.trim().length > 0);
+  let currentParentId = process.env.GOOGLE_DRIVE_FOLDER_ID; // Começa da raiz do projeto
+
+  for (const part of parts) {
+    currentParentId = await findOrCreateFolder(part, currentParentId);
+  }
+
+  return currentParentId;
+};
+
 // Inicializa OAuth2 Client usando variáveis de ambiente
 try {
   const CLIENT_ID = process.env.GOOGLE_DRIVE_CLIENT_ID;
@@ -51,15 +126,15 @@ const uploadFileToDrive = async (fileObject, folderName) => {
   const bufferStream = new stream.PassThrough();
   bufferStream.end(fileObject.buffer);
 
-  // Use environment variable for folder ID or fallback to root if not provided (though specific folder is recommended)
-  const PARENT_FOLDER_ID = process.env.GOOGLE_DRIVE_FOLDER_ID;
+  // Resolve a estrutura de pastas dinamicamente
+  const parentFolderId = await resolveFolderPath(folderName);
 
   const fileMetadata = {
     name: `${Date.now()}_${fileObject.originalname}`,
   };
 
-  if (PARENT_FOLDER_ID) {
-    fileMetadata.parents = [PARENT_FOLDER_ID];
+  if (parentFolderId) {
+    fileMetadata.parents = [parentFolderId];
   }
 
   const { data } = await drive.files.create({
