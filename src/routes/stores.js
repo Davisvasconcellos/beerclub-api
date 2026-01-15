@@ -1,6 +1,6 @@
 const express = require('express');
 const { body, validationResult } = require('express-validator');
-const { sequelize, Store, User, Product, StoreUser, StoreSchedule, FinVendor, FinCustomer, FinAccountsPayable, FinAccountsReceivable, FinPayment } = require('../models');
+const { sequelize, Store, User, Product, StoreUser, StoreSchedule, FinVendor, FinCustomer, FinAccountsPayable, FinAccountsReceivable, FinPayment, FinTransaction } = require('../models');
 const { authenticateToken, requireRole } = require('../middlewares/auth');
 
 const router = express.Router();
@@ -1228,6 +1228,125 @@ router.get('/:id_code/fin/receivables', authenticateToken, async (req, res) => {
   } catch (error) {
     console.error('List receivables error:', error);
     res.status(500).json({ error: 'Internal server error', message: 'Erro interno do servidor' });
+  }
+});
+
+/**
+ * Criar lançamento financeiro unificado (PAYABLE, RECEIVABLE, TRANSFER, ADJUSTMENT)
+ * POST /api/v1/stores/{id_code}/fin/transactions
+ */
+router.post('/:id_code/fin/transactions', authenticateToken, requireRole(['admin']), [
+  body('type').isIn(['PAYABLE', 'RECEIVABLE', 'TRANSFER', 'ADJUSTMENT']),
+  body('description').isString().isLength({ min: 1 }),
+  body('amount').isDecimal(),
+  body('due_date').isISO8601(),
+  body('status').isIn(['pending', 'approved', 'scheduled', 'paid', 'overdue', 'canceled']),
+  body('is_paid').isBoolean(),
+  body('paid_at').optional().isISO8601(),
+  body('payment_method').optional().isString(),
+  body('bank_account_id').optional().isString(),
+  body('nf').optional().isString(),
+  body('party_id').optional().isString(),
+  body('cost_center').optional().isString(),
+  body('category').optional().isString(),
+  body('attachment_url').optional().isURL({ require_tld: false })
+], async (req, res) => {
+  const t = await sequelize.transaction();
+  try {
+    const errors = validationResult(req);
+    if (!errors.isEmpty()) {
+      await t.rollback();
+      return res.status(400).json({ error: 'Validation error', details: errors.array() });
+    }
+
+    const { id_code } = req.params;
+    const store = await Store.findOne({ where: { id_code } });
+    if (!store) {
+      await t.rollback();
+      return res.status(404).json({ error: 'Not Found', message: 'Loja não encontrada' });
+    }
+
+    const {
+      type,
+      nf,
+      description,
+      amount,
+      due_date,
+      paid_at,
+      party_id,
+      cost_center,
+      category,
+      is_paid,
+      status,
+      payment_method,
+      bank_account_id,
+      attachment_url
+    } = req.body;
+
+    if (Number(amount) <= 0) {
+      await t.rollback();
+      return res.status(400).json({ error: 'Validation error', message: 'amount deve ser maior que zero' });
+    }
+
+    if (is_paid && status !== 'paid') {
+      await t.rollback();
+      return res.status(400).json({ error: 'Validation error', message: 'Quando is_paid=true, status deve ser \"paid\"' });
+    }
+    if (!is_paid && status === 'paid') {
+      await t.rollback();
+      return res.status(400).json({ error: 'Validation error', message: 'Quando status=\"paid\", is_paid deve ser true' });
+    }
+
+    if (status === 'paid') {
+      if (!paid_at) {
+        await t.rollback();
+        return res.status(400).json({ error: 'Validation error', message: 'paid_at é obrigatório quando status=\"paid\"' });
+      }
+      if (!payment_method) {
+        await t.rollback();
+        return res.status(400).json({ error: 'Validation error', message: 'payment_method é obrigatório quando status=\"paid\"' });
+      }
+    } else {
+      if (paid_at || payment_method || bank_account_id) {
+        await t.rollback();
+        return res.status(400).json({ error: 'Validation error', message: 'paid_at, payment_method e bank_account_id devem ser nulos quando status != \"paid\"' });
+      }
+    }
+
+    const bankRequiredMethods = ['pix', 'bank_transfer', 'boleto'];
+    if (status === 'paid' && bankRequiredMethods.includes(payment_method)) {
+      if (!bank_account_id) {
+        await t.rollback();
+        return res.status(400).json({ error: 'Validation error', message: 'bank_account_id é obrigatório para este método de pagamento' });
+      }
+    }
+
+    const transaction = await FinTransaction.create({
+      store_id: store.id,
+      type,
+      nf,
+      description,
+      amount,
+      currency: 'BRL',
+      due_date,
+      paid_at: status === 'paid' ? paid_at : null,
+      party_id,
+      cost_center,
+      category,
+      is_paid,
+      status,
+      payment_method: status === 'paid' ? payment_method : null,
+      bank_account_id: status === 'paid' ? bank_account_id : null,
+      attachment_url,
+      created_by: req.user.userId
+    }, { transaction: t });
+
+    await t.commit();
+    return res.status(201).json({ success: true, data: transaction });
+  } catch (error) {
+    await t.rollback();
+    console.error('Create transaction error:', error);
+    return res.status(500).json({ error: 'Internal server error', message: 'Erro interno do servidor' });
   }
 });
 

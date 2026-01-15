@@ -28,6 +28,7 @@ const FinCustomer = require('./FinCustomer');
 const FinAccountsPayable = require('./FinAccountsPayable');
 const FinAccountsReceivable = require('./FinAccountsReceivable');
 const FinPayment = require('./FinPayment');
+const FinTransaction = require('./FinTransaction');
 
 // Define associations
 
@@ -176,6 +177,11 @@ FinPayment.belongsTo(FinAccountsReceivable, { foreignKey: 'receivable_id', as: '
 User.hasMany(FinPayment, { foreignKey: 'created_by', as: 'createdPayments' });
 FinPayment.belongsTo(User, { foreignKey: 'created_by', as: 'creator' });
 
+Store.hasMany(FinTransaction, { foreignKey: 'store_id', as: 'transactions' });
+FinTransaction.belongsTo(Store, { foreignKey: 'store_id', as: 'store' });
+User.hasMany(FinTransaction, { foreignKey: 'created_by', as: 'createdTransactions' });
+FinTransaction.belongsTo(User, { foreignKey: 'created_by', as: 'creator' });
+
 module.exports = {
   sequelize,
   Plan,
@@ -205,4 +211,5 @@ module.exports = {
   ,FinAccountsPayable
   ,FinAccountsReceivable
   ,FinPayment
+  ,FinTransaction
 };
