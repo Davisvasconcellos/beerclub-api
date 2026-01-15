@@ -2432,6 +2432,19 @@ router.patch('/:id/responses', authenticateToken, [
 
       // Encontrar ou criar o response
       let response = await EventResponse.findOne({ where: { event_id: event.id, user_id: user.id }, transaction: t });
+      
+      // Atualizar selfie também no EventGuest, se fornecida
+      if (selfie_url) {
+        const guest = await EventGuest.findOne({ 
+          where: { event_id: event.id, user_id: user.id },
+          transaction: t 
+        });
+        if (guest) {
+          guest.selfie_url = selfie_url;
+          await guest.save({ transaction: t });
+        }
+      }
+
       if (!response) {
         response = await EventResponse.create({
           event_id: event.id,

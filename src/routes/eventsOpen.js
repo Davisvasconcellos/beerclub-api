@@ -400,6 +400,11 @@ router.post('/:id/checkin', authenticateToken, [
 
     // Atualiza/insere EventResponse para armazenar selfie
     if (selfie_url) {
+      // Atualiza também o EventGuest com a selfie
+      if (guest) {
+        await guest.update({ selfie_url });
+      }
+
       let response = await EventResponse.findOne({ where: { event_id: event.id, user_id: userId } });
       if (!response) {
         response = await EventResponse.create({
