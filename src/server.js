@@ -34,6 +34,7 @@ const eventOpenRoutes = require('./routes/eventsOpen');
 const eventJamsRoutes = require('./routes/eventJams');
 const uploadRoutes = require('./routes/upload');
 const filesRoutes = require('./routes/files');
+const financialRoutes = require('./routes/financial');
 
 // Import middleware
 const errorHandler = require('./middlewares/errorHandler');
@@ -235,6 +236,7 @@ app.use('/api/events', eventJamsRoutes);
 app.use('/api/public/v1/events', eventJamsRoutes);
 app.use('/api/v1/uploads', uploadRoutes);
 app.use('/api/v1/files', filesRoutes);
+app.use('/api/v1/financial', financialRoutes);
 
 // Swagger (apenas dev)
 if (process.env.NODE_ENV === 'development') {
@@ -266,19 +268,23 @@ process.on('SIGTERM', () => {
 });
 
 // Start server
-server = app.listen(PORT, '0.0.0.0', () => {
-  console.log(`Server running on port ${PORT}`);
-  if (process.env.NODE_ENV === 'development') {
-    console.log(`Docs: ${process.env.API_PUBLIC_BASE_URL || `http://localhost:${PORT}`}/api-docs`);
-    console.log(`SSE Test: ${process.env.API_PUBLIC_BASE_URL || `http://localhost:${PORT}`}/api/stream-test`);
-  }
-});
+if (process.env.NODE_ENV !== 'test') {
+  server = app.listen(PORT, '0.0.0.0', () => {
+    console.log(`Server running on port ${PORT}`);
+    if (process.env.NODE_ENV === 'development') {
+      console.log(`Docs: ${process.env.API_PUBLIC_BASE_URL || `http://localhost:${PORT}`}/api-docs`);
+      console.log(`SSE Test: ${process.env.API_PUBLIC_BASE_URL || `http://localhost:${PORT}`}/api/stream-test`);
+    }
+  });
+}
 
 // Database connection
 (async () => {
   try {
-    await testConnection();
-    console.log('Database connected successfully');
+    if (process.env.NODE_ENV !== 'test') {
+      await testConnection();
+      console.log('Database connected successfully');
+    }
   } catch (error) {
     console.error('Database connection failed:', error);
     process.exit(1);

@@ -13,6 +13,7 @@ const OrderItem = require('./OrderItem');
 const PixPayment = require('./PixPayment');
 const Message = require('./Message');
 const StoreSchedule = require('./StoreSchedule');
+const FinancialTransaction = require('./FinancialTransaction');
 const Event = require('./Event');
 const EventQuestion = require('./EventQuestion');
 const EventResponse = require('./EventResponse');
@@ -139,6 +140,9 @@ User.hasMany(EventJamSongRating, { foreignKey: 'user_id', as: 'jamSongRatings' }
 EventJamSongRating.belongsTo(EventGuest, { foreignKey: 'event_guest_id', as: 'guest' });
 EventGuest.hasMany(EventJamSongRating, { foreignKey: 'event_guest_id', as: 'jamSongRatings' });
 
+User.hasMany(FinancialTransaction, { foreignKey: 'created_by_user_id', as: 'financialTransactions' });
+FinancialTransaction.belongsTo(User, { foreignKey: 'created_by_user_id', as: 'createdBy' });
+
 module.exports = {
   sequelize,
   Plan,
@@ -152,8 +156,9 @@ module.exports = {
   Message,
   FootballTeam,
   TokenBlocklist,
-  StoreSchedule
-  ,Event
+  StoreSchedule,
+  FinancialTransaction,
+  Event
   ,EventQuestion
   ,EventResponse
   ,EventAnswer

@@ -197,6 +197,52 @@ router.get('/:id_code', authenticateToken, async (req, res) => {
  *               - legal_responsible
  *               - cnpj
  *               - description
+ *             properties:
+ *               name:
+ *                 type: string
+ *               email:
+ *                 type: string
+ *               cnpj:
+ *                 type: string
+ *               logo_url:
+ *                 type: string
+ *               instagram_handle:
+ *                 type: string
+ *               facebook_handle:
+ *                 type: string
+ *               capacity:
+ *                 type: integer
+ *               type:
+ *                 type: string
+ *                 enum: [bar, restaurante, pub, cervejaria, casa noturna, distribuidora]
+ *               legal_name:
+ *                 type: string
+ *               phone:
+ *                 type: string
+ *               address_street:
+ *                 type: string
+ *               address_neighborhood:
+ *                 type: string
+ *               address_state:
+ *                 type: string
+ *               address_number:
+ *                 type: string
+ *               address_complement:
+ *                 type: string
+ *               banner_url:
+ *                 type: string
+ *               website:
+ *                 type: string
+ *               latitude:
+ *                 type: number
+ *                 format: float
+ *               longitude:
+ *                 type: number
+ *                 format: float
+ *               zip_code:
+ *                 type: string
+ *               description:
+ *                 type: string
  *     responses:
  *       201:
  *         description: Loja criada com sucesso
@@ -355,6 +401,52 @@ router.post('/',
  *         application/json:
  *           schema:
  *             type: object
+ *             properties:
+ *               name:
+ *                 type: string
+ *               email:
+ *                 type: string
+ *               cnpj:
+ *                 type: string
+ *               logo_url:
+ *                 type: string
+ *               instagram_handle:
+ *                 type: string
+ *               facebook_handle:
+ *                 type: string
+ *               capacity:
+ *                 type: integer
+ *               type:
+ *                 type: string
+ *                 enum: [bar, restaurante, pub, cervejaria, casa noturna, distribuidora]
+ *               legal_name:
+ *                 type: string
+ *               phone:
+ *                 type: string
+ *               address_street:
+ *                 type: string
+ *               address_neighborhood:
+ *                 type: string
+ *               address_state:
+ *                 type: string
+ *               address_number:
+ *                 type: string
+ *               address_complement:
+ *                 type: string
+ *               banner_url:
+ *                 type: string
+ *               website:
+ *                 type: string
+ *               latitude:
+ *                 type: number
+ *                 format: float
+ *               longitude:
+ *                 type: number
+ *                 format: float
+ *               zip_code:
+ *                 type: string
+ *               description:
+ *                 type: string
  *     responses:
  *       200:
  *         description: Loja atualizada com sucesso
