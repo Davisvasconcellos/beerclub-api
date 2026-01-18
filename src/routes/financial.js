@@ -3,6 +3,7 @@ const { body, query, validationResult } = require('express-validator');
 const { authenticateToken, requireRole } = require('../middlewares/auth');
 const { FinancialTransaction, User } = require('../models');
 const { Op, Sequelize } = require('sequelize');
+const { URL } = require('url');
 
 const router = express.Router();
 
@@ -10,6 +11,123 @@ const VALID_TYPES = ['PAYABLE', 'RECEIVABLE', 'TRANSFER', 'ADJUSTMENT'];
 const VALID_STATUS = ['pending', 'approved', 'scheduled', 'paid', 'overdue', 'canceled'];
 const VALID_PAYMENT_METHODS = ['cash', 'pix', 'credit_card', 'debit_card', 'bank_transfer', 'boleto'];
 const BANK_MOVEMENT_METHODS = ['pix', 'bank_transfer', 'boleto'];
+
+const parseStoredAttachments = (raw) => {
+  if (!raw) return [];
+  let text = raw;
+  if (typeof raw !== 'string') {
+    try {
+      text = String(raw);
+    } catch (e) {
+      return [];
+    }
+  }
+  const trimmed = text.trim();
+  if (trimmed.startsWith('[')) {
+    try {
+      const parsed = JSON.parse(trimmed);
+      if (Array.isArray(parsed)) {
+        return parsed
+          .filter((item) => item && typeof item.url === 'string')
+          .map((item, index) => ({
+            url: item.url,
+            filename:
+              typeof item.filename === 'string' && item.filename.trim().length > 0
+                ? item.filename
+                : `Arquivo ${index + 1}`
+          }));
+      }
+    } catch (e) {
+      const urlSegments = trimmed.match(/"url"\s*:\s*"([^"]+)"/g);
+      if (urlSegments && urlSegments.length > 0) {
+        const recovered = urlSegments
+          .map((segment, index) => {
+            const match = segment.match(/"url"\s*:\s*"([^"]+)"/);
+            const url = match && match[1] ? match[1] : '';
+            if (!url) return null;
+            let filename = `Arquivo ${index + 1}`;
+            try {
+              const parsed = new URL(url);
+              const fromQuery = parsed.searchParams.get('filename');
+              if (fromQuery && fromQuery.trim().length > 0) {
+                filename = fromQuery;
+              } else {
+                const last = parsed.pathname.split('/').pop();
+                if (last && last.trim().length > 0) {
+                  filename = last;
+                }
+              }
+            } catch (e2) {
+            }
+            return { url, filename };
+          })
+          .filter((item) => item && typeof item.url === 'string');
+        if (recovered.length > 0) {
+          return recovered;
+        }
+      }
+    }
+  }
+  const parts = trimmed
+    .split(';')
+    .map((s) => s.trim())
+    .filter((s) => s.length > 0);
+  return parts.map((url, index) => {
+    let filename = `Arquivo ${index + 1}`;
+    try {
+      const parsed = new URL(url);
+      const fromQuery = parsed.searchParams.get('filename');
+      if (fromQuery && fromQuery.trim().length > 0) {
+        filename = fromQuery;
+      } else {
+        const last = parsed.pathname.split('/').pop();
+        if (last && last.trim().length > 0) {
+          filename = last;
+        }
+      }
+    } catch (e) {
+    }
+    return { url, filename };
+  });
+};
+
+const serializeAttachmentsToStorage = (attachments) => {
+  if (!attachments || !attachments.length) return null;
+  const normalized = attachments
+    .filter((item) => item && typeof item.url === 'string')
+    .map((item, index) => ({
+      url: item.url,
+      filename:
+        typeof item.filename === 'string' && item.filename.trim().length > 0
+          ? item.filename
+          : `Arquivo ${index + 1}`
+    }));
+  if (!normalized.length) return null;
+  return JSON.stringify(normalized);
+};
+
+const buildAttachmentUrlString = (attachments) => {
+  if (!attachments || !attachments.length) return null;
+  return attachments.map((a) => a.url).join(';');
+};
+
+const parseAttachmentsFromRequestBody = (body, existingRaw) => {
+  if (body && Array.isArray(body.attachments) && body.attachments.length > 0) {
+    return body.attachments
+      .filter((a) => a && typeof a.url === 'string')
+      .map((a, index) => ({
+        url: a.url,
+        filename:
+          typeof a.filename === 'string' && a.filename.trim().length > 0
+            ? a.filename
+            : `Arquivo ${index + 1}`
+      }));
+  }
+  if (body && Object.prototype.hasOwnProperty.call(body, 'attachment_url')) {
+    return parseStoredAttachments(body.attachment_url);
+  }
+  return parseStoredAttachments(existingRaw);
+};
 
 router.get(
   '/transactions',
@@ -86,6 +204,17 @@ router.get(
           'bank_account_id', 'attachment_url', 'store_id', 'approved_by',
           'created_at'
         ]
+      });
+
+      const serializedTransactions = transactions.map((row) => {
+        const plain = typeof row.toJSON === 'function' ? row.toJSON() : row;
+        const attachments = parseStoredAttachments(plain.attachment_url);
+        const attachmentUrlString = buildAttachmentUrlString(attachments);
+        return {
+          ...plain,
+          attachment_url: attachmentUrlString,
+          attachments
+        };
       });
 
       // Group by type and status to aggregate amounts
@@ -172,7 +301,7 @@ router.get(
           pages: Math.ceil(count / limitNumber)
         },
         data: {
-          transactions,
+          transactions: serializedTransactions,
           summary
         }
       });
@@ -340,6 +469,8 @@ router.post(
         });
       }
 
+      const attachments = parseAttachmentsFromRequestBody(req.body, null);
+
       const payload = {
         type,
         nf: nf || null,
@@ -355,7 +486,7 @@ router.post(
         status,
         payment_method: status === 'paid' ? payment_method : null,
         bank_account_id: status === 'paid' ? bank_account_id || null : null,
-        attachment_url: attachment_url || null,
+        attachment_url: serializeAttachmentsToStorage(attachments),
         store_id: store_id || null,
         approved_by: approved_by || null,
         created_by_user_id: user.id,
@@ -364,6 +495,9 @@ router.post(
       };
 
       const transaction = await FinancialTransaction.create(payload);
+
+      const responseAttachments = parseStoredAttachments(transaction.attachment_url);
+      const responseAttachmentUrl = buildAttachmentUrlString(responseAttachments);
 
       return res.status(201).json({
         success: true,
@@ -384,10 +518,11 @@ router.post(
           is_paid: transaction.is_paid,
           payment_method: transaction.payment_method,
           bank_account_id: transaction.bank_account_id,
-          attachment_url: transaction.attachment_url,
+          attachment_url: responseAttachmentUrl,
           store_id: transaction.store_id,
           approved_by: transaction.approved_by,
-          created_by: user.id_code
+          created_by: user.id_code,
+          attachments: responseAttachments
         }
       });
     } catch (error) {
@@ -530,6 +665,13 @@ router.patch(
       const attachment_url = Object.prototype.hasOwnProperty.call(req.body, 'attachment_url')
         ? req.body.attachment_url
         : existing.attachment_url;
+      const hasAttachmentUpdate =
+        (req.body && Array.isArray(req.body.attachments) && req.body.attachments.length > 0) ||
+        (req.body && Object.prototype.hasOwnProperty.call(req.body, 'attachment_url'));
+      const attachmentsForStorage = hasAttachmentUpdate
+        ? parseAttachmentsFromRequestBody(req.body, existing.attachment_url)
+        : parseStoredAttachments(existing.attachment_url);
+      const storedAttachmentValue = serializeAttachmentsToStorage(attachmentsForStorage);
       const store_id = Object.prototype.hasOwnProperty.call(req.body, 'store_id')
         ? req.body.store_id
         : existing.store_id;
@@ -544,6 +686,55 @@ router.patch(
         : existing.is_deleted;
 
       if (existing.status === 'paid') {
+        const allowedPaidUpdateFields = ['attachment_url', 'attachments'];
+        const incomingKeys = Object.keys(req.body || {});
+        const isPureAttachmentUpdate =
+          incomingKeys.length > 0 &&
+          incomingKeys.every((key) => allowedPaidUpdateFields.includes(key));
+
+        if (isPureAttachmentUpdate) {
+          await transaction.update({
+            attachment_url: storedAttachmentValue,
+            updated_by_user_id: req.user.userId
+          });
+
+          await transaction.reload();
+
+          const creator = await User.findByPk(transaction.created_by_user_id, {
+            attributes: ['id_code']
+          });
+
+          const responseAttachments = parseStoredAttachments(transaction.attachment_url);
+          const responseAttachmentUrl = buildAttachmentUrlString(responseAttachments);
+
+          return res.json({
+            success: true,
+            data: {
+              id_code: transaction.id_code,
+              type: transaction.type,
+              nf: transaction.nf,
+              description: transaction.description,
+              amount: parseFloat(transaction.amount),
+              currency: transaction.currency,
+              issue_date: transaction.created_at.toISOString(),
+              due_date: transaction.due_date,
+              paid_at: transaction.paid_at,
+              status: transaction.status,
+              party_id: transaction.party_id,
+              cost_center: transaction.cost_center,
+              category: transaction.category,
+              is_paid: transaction.is_paid,
+              payment_method: transaction.payment_method,
+              bank_account_id: transaction.bank_account_id,
+              attachment_url: responseAttachmentUrl,
+              store_id: transaction.store_id,
+              approved_by: transaction.approved_by,
+              created_by: creator ? creator.id_code : null,
+              attachments: responseAttachments
+            }
+          });
+        }
+
         if (status !== 'canceled') {
           return res.status(400).json({
             error: 'Validation error',
@@ -609,24 +800,26 @@ router.patch(
           status: 'canceled',
           payment_method: null,
           bank_account_id: null,
-          attachment_url: existing.attachment_url,
+          attachment_url: storedAttachmentValue,
           store_id: existing.store_id,
           approved_by: existing.approved_by,
           is_deleted: false,
           updated_by_user_id: req.user.userId
         });
 
-        await transaction.reload();
+      await transaction.reload();
 
-        const creator = await User.findByPk(transaction.created_by_user_id, {
-          attributes: ['id_code']
-        });
+      const creator = await User.findByPk(transaction.created_by_user_id, {
+        attributes: ['id_code']
+      });
+      const cancelResponseAttachments = parseStoredAttachments(transaction.attachment_url);
+      const cancelResponseAttachmentUrl = buildAttachmentUrlString(cancelResponseAttachments);
 
-        return res.json({
-          success: true,
-          data: {
-            id_code: transaction.id_code,
-            type: transaction.type,
+      return res.json({
+        success: true,
+        data: {
+          id_code: transaction.id_code,
+          type: transaction.type,
             nf: transaction.nf,
             description: transaction.description,
             amount: parseFloat(transaction.amount),
@@ -637,16 +830,17 @@ router.patch(
             status: transaction.status,
             party_id: transaction.party_id,
             cost_center: transaction.cost_center,
-            category: transaction.category,
-            is_paid: transaction.is_paid,
-            payment_method: transaction.payment_method,
-            bank_account_id: transaction.bank_account_id,
-            attachment_url: transaction.attachment_url,
-            store_id: transaction.store_id,
-            approved_by: transaction.approved_by,
-            created_by: creator ? creator.id_code : null
-          }
-        });
+          category: transaction.category,
+          is_paid: transaction.is_paid,
+          payment_method: transaction.payment_method,
+          bank_account_id: transaction.bank_account_id,
+          attachment_url: cancelResponseAttachmentUrl,
+          store_id: transaction.store_id,
+          approved_by: transaction.approved_by,
+          created_by: creator ? creator.id_code : null,
+          attachments: cancelResponseAttachments
+        }
+      });
       }
 
       if (is_paid && status !== 'paid') {
@@ -725,7 +919,7 @@ router.patch(
         status,
         payment_method: status === 'paid' ? payment_method : null,
         bank_account_id: status === 'paid' ? bank_account_id || null : null,
-        attachment_url: attachment_url || null,
+        attachment_url: storedAttachmentValue,
         store_id: store_id || null,
         approved_by: approved_by || null,
         is_deleted,
@@ -737,6 +931,9 @@ router.patch(
       const creator = await User.findByPk(transaction.created_by_user_id, {
         attributes: ['id_code']
       });
+
+      const responseAttachments = parseStoredAttachments(transaction.attachment_url);
+      const responseAttachmentUrl = buildAttachmentUrlString(responseAttachments);
 
       return res.json({
         success: true,
@@ -757,10 +954,11 @@ router.patch(
           is_paid: transaction.is_paid,
           payment_method: transaction.payment_method,
           bank_account_id: transaction.bank_account_id,
-          attachment_url: transaction.attachment_url,
+          attachment_url: responseAttachmentUrl,
           store_id: transaction.store_id,
           approved_by: transaction.approved_by,
-          created_by: creator ? creator.id_code : null
+          created_by: creator ? creator.id_code : null,
+          attachments: responseAttachments
         }
       });
     } catch (error) {

@@ -76,7 +76,7 @@ const FinancialTransaction = sequelize.define('FinancialTransaction', {
     allowNull: true
   },
   attachment_url: {
-    type: DataTypes.STRING(500),
+    type: DataTypes.TEXT,
     allowNull: true
   },
   store_id: {

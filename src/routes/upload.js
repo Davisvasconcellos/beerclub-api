@@ -257,8 +257,13 @@ const uploadFileToDrive = async (fileObject, folderName) => {
     cleanPath = folderName ? folderName.replace(/['"]/g, '').trim() : '';
     parentFolderId = await resolveFolderPath(folderName);
 
+    const originalName = fileObject.originalname || 'file';
+    const ext = path.extname(originalName);
+    const baseName = path.basename(originalName, ext);
+    const timestamp = Date.now();
+
     const fileMetadata = {
-      name: `${Date.now()}_${fileObject.originalname}`,
+      name: `${baseName}_${timestamp}${ext}`,
     };
 
     if (parentFolderId) {
@@ -385,7 +390,9 @@ router.post('/', upload.single('file'), async (req, res) => {
     
     // Constrói a URL do Proxy da própria API
     const apiBaseUrl = process.env.API_PUBLIC_BASE_URL || `http://localhost:${process.env.PORT || 4000}`;
-    const proxyUrl = `${apiBaseUrl}/api/v1/files/${result.id}`;
+    const downloadName = result.name || req.file.originalname || 'file';
+    const safeDownloadName = encodeURIComponent(downloadName);
+    const proxyUrl = `${apiBaseUrl}/api/v1/files/${result.id}?filename=${safeDownloadName}`;
 
     res.json({
       success: true,
