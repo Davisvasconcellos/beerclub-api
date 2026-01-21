@@ -14,6 +14,7 @@ const PixPayment = require('./PixPayment');
 const Message = require('./Message');
 const StoreSchedule = require('./StoreSchedule');
 const FinancialTransaction = require('./FinancialTransaction');
+const BankAccount = require('./BankAccount');
 const Event = require('./Event');
 const EventQuestion = require('./EventQuestion');
 const EventResponse = require('./EventResponse');
@@ -24,6 +25,10 @@ const EventJamSong = require('./EventJamSong');
 const EventJamSongInstrumentSlot = require('./EventJamSongInstrumentSlot');
 const EventJamSongCandidate = require('./EventJamSongCandidate');
 const EventJamSongRating = require('./EventJamSongRating');
+const Party = require('./Party');
+const FinCategory = require('./FinCategory');
+const FinCostCenter = require('./FinCostCenter');
+const FinTag = require('./FinTag');
 
 // Define associations
 
@@ -143,6 +148,55 @@ EventGuest.hasMany(EventJamSongRating, { foreignKey: 'event_guest_id', as: 'jamS
 User.hasMany(FinancialTransaction, { foreignKey: 'created_by_user_id', as: 'financialTransactions' });
 FinancialTransaction.belongsTo(User, { foreignKey: 'created_by_user_id', as: 'createdBy' });
 
+// BankAccount associations
+BankAccount.belongsTo(Store, { foreignKey: 'store_id', targetKey: 'id_code', as: 'store' });
+Store.hasMany(BankAccount, { foreignKey: 'store_id', sourceKey: 'id_code', as: 'bankAccounts' });
+
+FinancialTransaction.belongsTo(BankAccount, { foreignKey: 'bank_account_id', targetKey: 'id_code', as: 'bankAccount' });
+BankAccount.hasMany(FinancialTransaction, { foreignKey: 'bank_account_id', sourceKey: 'id_code', as: 'transactions' });
+
+// Party associations
+Party.belongsTo(Store, { foreignKey: 'store_id', targetKey: 'id_code', as: 'store' });
+Store.hasMany(Party, { foreignKey: 'store_id', sourceKey: 'id_code', as: 'parties' });
+
+FinancialTransaction.belongsTo(Party, { foreignKey: 'party_id', targetKey: 'id_code', as: 'party' });
+Party.hasMany(FinancialTransaction, { foreignKey: 'party_id', sourceKey: 'id_code', as: 'transactions' });
+
+// FinCategory associations
+FinCategory.belongsTo(Store, { foreignKey: 'store_id', targetKey: 'id_code', as: 'store' });
+Store.hasMany(FinCategory, { foreignKey: 'store_id', sourceKey: 'id_code', as: 'finCategories' });
+
+FinancialTransaction.belongsTo(FinCategory, { foreignKey: 'category_id', targetKey: 'id_code', as: 'finCategory' });
+FinCategory.hasMany(FinancialTransaction, { foreignKey: 'category_id', sourceKey: 'id_code', as: 'transactions' });
+
+// FinCostCenter associations
+FinCostCenter.belongsTo(Store, { foreignKey: 'store_id', targetKey: 'id_code', as: 'store' });
+Store.hasMany(FinCostCenter, { foreignKey: 'store_id', sourceKey: 'id_code', as: 'finCostCenters' });
+
+FinancialTransaction.belongsTo(FinCostCenter, { foreignKey: 'cost_center_id', targetKey: 'id_code', as: 'finCostCenter' });
+FinCostCenter.hasMany(FinancialTransaction, { foreignKey: 'cost_center_id', sourceKey: 'id_code', as: 'transactions' });
+
+// FinTag associations
+FinTag.belongsTo(Store, { foreignKey: 'store_id', targetKey: 'id_code', as: 'store' });
+Store.hasMany(FinTag, { foreignKey: 'store_id', sourceKey: 'id_code', as: 'finTags' });
+
+FinancialTransaction.belongsToMany(FinTag, {
+  through: 'fin_transaction_tags',
+  foreignKey: 'transaction_id',
+  otherKey: 'tag_id',
+  sourceKey: 'id_code',
+  targetKey: 'id_code',
+  as: 'tags'
+});
+FinTag.belongsToMany(FinancialTransaction, {
+  through: 'fin_transaction_tags',
+  foreignKey: 'tag_id',
+  otherKey: 'transaction_id',
+  sourceKey: 'id_code',
+  targetKey: 'id_code',
+  as: 'transactions'
+});
+
 module.exports = {
   sequelize,
   Plan,
@@ -158,6 +212,7 @@ module.exports = {
   TokenBlocklist,
   StoreSchedule,
   FinancialTransaction,
+  BankAccount,
   Event
   ,EventQuestion
   ,EventResponse
@@ -168,4 +223,8 @@ module.exports = {
   ,EventJamSongInstrumentSlot
   ,EventJamSongCandidate
   ,EventJamSongRating
+  ,Party
+  ,FinCategory
+  ,FinCostCenter
+  ,FinTag
 };

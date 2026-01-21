@@ -46,15 +46,23 @@ const FinancialTransaction = sequelize.define('FinancialTransaction', {
     allowNull: true
   },
   party_id: {
-    type: DataTypes.STRING(64),
+    type: DataTypes.STRING(255),
     allowNull: true
   },
   cost_center: {
     type: DataTypes.STRING(64),
     allowNull: true
   },
+  cost_center_id: {
+    type: DataTypes.STRING(255),
+    allowNull: true
+  },
   category: {
     type: DataTypes.STRING(64),
+    allowNull: true
+  },
+  category_id: {
+    type: DataTypes.STRING(255),
     allowNull: true
   },
   is_paid: {
@@ -109,16 +117,16 @@ const FinancialTransaction = sequelize.define('FinancialTransaction', {
     type: DataTypes.BOOLEAN,
     allowNull: false,
     defaultValue: false
-  },
+  }
 }, {
-  tableName: 'financial_transactions',
+  tableName: 'fin_transactions',
   timestamps: true,
   createdAt: 'created_at',
   updatedAt: 'updated_at',
   hooks: {
-    beforeValidate: (transaction) => {
-      if (!transaction.id_code) {
-        transaction.id_code = `txn-${uuidv4()}`;
+    beforeValidate: (txn) => {
+      if (!txn.id_code) {
+        txn.id_code = `txn-${uuidv4()}`;
       }
     }
   }

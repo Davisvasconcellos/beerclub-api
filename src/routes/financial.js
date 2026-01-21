@@ -1,7 +1,7 @@
 const express = require('express');
 const { body, query, validationResult } = require('express-validator');
 const { authenticateToken, requireRole } = require('../middlewares/auth');
-const { FinancialTransaction, User } = require('../models');
+const { FinancialTransaction, User, FinTag, FinCategory, FinCostCenter } = require('../models');
 const { Op, Sequelize } = require('sequelize');
 const { URL } = require('url');
 
@@ -196,13 +196,32 @@ router.get(
         where,
         limit: limitNumber,
         offset,
+        distinct: true,
         order: [['due_date', 'ASC']],
         attributes: [
           'id_code', 'type', 'nf', 'description', 'amount', 'currency',
           'due_date', 'paid_at', 'status', 'party_id',
-          'cost_center', 'category', 'is_paid', 'payment_method',
+          'cost_center', 'cost_center_id', 'category', 'category_id', 'is_paid', 'payment_method',
           'bank_account_id', 'attachment_url', 'store_id', 'approved_by',
           'created_at'
+        ],
+        include: [
+          {
+            model: FinTag,
+            as: 'tags',
+            attributes: ['id', 'id_code', 'name', 'color'],
+            through: { attributes: [] }
+          },
+          {
+            model: FinCategory,
+            as: 'finCategory',
+            attributes: ['id', 'id_code', 'name', 'color', 'icon']
+          },
+          {
+            model: FinCostCenter,
+            as: 'finCostCenter',
+            attributes: ['id', 'id_code', 'name', 'code']
+          }
         ]
       });
 
@@ -210,10 +229,27 @@ router.get(
         const plain = typeof row.toJSON === 'function' ? row.toJSON() : row;
         const attachments = parseStoredAttachments(plain.attachment_url);
         const attachmentUrlString = buildAttachmentUrlString(attachments);
+        const tags = plain.tags ? plain.tags.map(t => ({
+          id: t.id_code,
+          name: t.name,
+          color: t.color
+        })) : [];
         return {
           ...plain,
           attachment_url: attachmentUrlString,
-          attachments
+          attachments,
+          tags,
+          category_data: plain.finCategory ? {
+            id: plain.finCategory.id_code,
+            name: plain.finCategory.name,
+            color: plain.finCategory.color,
+            icon: plain.finCategory.icon
+          } : null,
+          cost_center_data: plain.finCostCenter ? {
+            id: plain.finCostCenter.id_code,
+            name: plain.finCostCenter.name,
+            code: plain.finCostCenter.code
+          } : null
         };
       });
 
@@ -348,6 +384,36 @@ router.post(
     body('category')
       .optional({ nullable: true })
       .isString(),
+    body('cost_center_id')
+      .optional({ nullable: true })
+      .isString(),
+    body('category_id')
+      .optional({ nullable: true })
+      .isString(),
+    body('cost_center_id')
+      .optional({ nullable: true })
+      .isString(),
+    body('category_id')
+      .optional({ nullable: true })
+      .isString(),
+    body('cost_center_id')
+      .optional({ nullable: true })
+      .isString(),
+    body('category_id')
+      .optional({ nullable: true })
+      .isString(),
+    body('cost_center_id')
+      .optional({ nullable: true })
+      .isString(),
+    body('category_id')
+      .optional({ nullable: true })
+      .isString(),
+    body('cost_center_id')
+      .optional({ nullable: true })
+      .isString(),
+    body('category_id')
+      .optional({ nullable: true })
+      .isString(),
     body('payment_method')
       .optional({ nullable: true })
       .isIn(VALID_PAYMENT_METHODS),
@@ -362,7 +428,10 @@ router.post(
       .isString(),
     body('approved_by')
       .optional({ nullable: true })
-      .isString()
+      .isString(),
+    body('tags')
+      .optional()
+      .isArray()
   ],
   async (req, res) => {
     try {
@@ -386,14 +455,17 @@ router.post(
         paid_at,
         party_id,
         cost_center,
+        cost_center_id,
         category,
+        category_id,
         is_paid,
         status,
         payment_method,
         bank_account_id,
         attachment_url,
         store_id,
-        approved_by
+        approved_by,
+        tags
       } = req.body;
 
       if (is_paid && status !== 'paid') {
@@ -481,7 +553,9 @@ router.post(
         paid_at: status === 'paid' ? paid_at : null,
         party_id: party_id || null,
         cost_center: cost_center || null,
+        cost_center_id: cost_center_id || null,
         category: category || null,
+        category_id: category_id || null,
         is_paid,
         status,
         payment_method: status === 'paid' ? payment_method : null,
@@ -495,6 +569,40 @@ router.post(
       };
 
       const transaction = await FinancialTransaction.create(payload);
+
+      if (tags && Array.isArray(tags) && tags.length > 0) {
+        const tagInstances = await FinTag.findAll({
+          where: {
+            id_code: {
+              [Op.in]: tags
+            }
+          }
+        });
+        if (tagInstances.length > 0) {
+          await transaction.setTags(tagInstances);
+        }
+      }
+
+      await transaction.reload({
+        include: [
+          {
+            model: FinTag,
+            as: 'tags',
+            attributes: ['id', 'id_code', 'name', 'color'],
+            through: { attributes: [] }
+          },
+          {
+            model: FinCategory,
+            as: 'finCategory',
+            attributes: ['id', 'id_code', 'name', 'color', 'icon']
+          },
+          {
+            model: FinCostCenter,
+            as: 'finCostCenter',
+            attributes: ['id', 'id_code', 'name', 'code']
+          }
+        ]
+      });
 
       const responseAttachments = parseStoredAttachments(transaction.attachment_url);
       const responseAttachmentUrl = buildAttachmentUrlString(responseAttachments);
@@ -514,7 +622,9 @@ router.post(
           status: transaction.status,
           party_id: transaction.party_id,
           cost_center: transaction.cost_center,
+          cost_center_id: transaction.cost_center_id,
           category: transaction.category,
+          category_id: transaction.category_id,
           is_paid: transaction.is_paid,
           payment_method: transaction.payment_method,
           bank_account_id: transaction.bank_account_id,
@@ -522,7 +632,23 @@ router.post(
           store_id: transaction.store_id,
           approved_by: transaction.approved_by,
           created_by: user.id_code,
-          attachments: responseAttachments
+          attachments: responseAttachments,
+          tags: transaction.tags ? transaction.tags.map(t => ({
+            id: t.id_code,
+            name: t.name,
+            color: t.color
+          })) : [],
+          category_data: transaction.finCategory ? {
+            id: transaction.finCategory.id_code,
+            name: transaction.finCategory.name,
+            color: transaction.finCategory.color,
+            icon: transaction.finCategory.icon
+          } : null,
+          cost_center_data: transaction.finCostCenter ? {
+            id: transaction.finCostCenter.id_code,
+            name: transaction.finCostCenter.name,
+            code: transaction.finCostCenter.code
+          } : null
         }
       });
     } catch (error) {
@@ -571,6 +697,12 @@ router.patch(
     body('category')
       .optional({ nullable: true })
       .isString(),
+    body('cost_center_id')
+      .optional({ nullable: true })
+      .isString(),
+    body('category_id')
+      .optional({ nullable: true })
+      .isString(),
     body('payment_method')
       .optional({ nullable: true })
       .isIn(VALID_PAYMENT_METHODS),
@@ -588,7 +720,10 @@ router.patch(
       .isString(),
     body('is_deleted')
       .optional()
-      .isBoolean()
+      .isBoolean(),
+    body('tags')
+      .optional()
+      .isArray()
   ],
   async (req, res) => {
     const errors = validationResult(req);
@@ -649,9 +784,15 @@ router.patch(
       const cost_center = Object.prototype.hasOwnProperty.call(req.body, 'cost_center')
         ? req.body.cost_center
         : existing.cost_center;
+      const cost_center_id = Object.prototype.hasOwnProperty.call(req.body, 'cost_center_id')
+        ? req.body.cost_center_id
+        : existing.cost_center_id;
       const category = Object.prototype.hasOwnProperty.call(req.body, 'category')
         ? req.body.category
         : existing.category;
+      const category_id = Object.prototype.hasOwnProperty.call(req.body, 'category_id')
+        ? req.body.category_id
+        : existing.category_id;
       const status = req.body.status ?? existing.status;
       const is_paid = Object.prototype.hasOwnProperty.call(req.body, 'is_paid')
         ? req.body.is_paid
@@ -684,6 +825,7 @@ router.patch(
       const is_deleted = Object.prototype.hasOwnProperty.call(req.body, 'is_deleted')
         ? req.body.is_deleted
         : existing.is_deleted;
+      const tags = req.body.tags;
 
       if (existing.status === 'paid') {
         const allowedPaidUpdateFields = ['attachment_url', 'attachments'];
@@ -914,7 +1056,9 @@ router.patch(
         paid_at: status === 'paid' ? paid_at : null,
         party_id: party_id || null,
         cost_center: cost_center || null,
+        cost_center_id: cost_center_id || null,
         category: category || null,
+        category_id: category_id || null,
         is_paid,
         status,
         payment_method: status === 'paid' ? payment_method : null,
@@ -926,7 +1070,37 @@ router.patch(
         updated_by_user_id: req.user.userId
       });
 
-      await transaction.reload();
+      if (tags && Array.isArray(tags)) {
+        const tagInstances = await FinTag.findAll({
+          where: {
+            id_code: {
+              [Op.in]: tags
+            }
+          }
+        });
+        await transaction.setTags(tagInstances);
+      }
+
+      await transaction.reload({
+        include: [
+          {
+            model: FinTag,
+            as: 'tags',
+            attributes: ['id', 'id_code', 'name', 'color'],
+            through: { attributes: [] }
+          },
+          {
+            model: FinCategory,
+            as: 'finCategory',
+            attributes: ['id', 'id_code', 'name', 'color', 'icon']
+          },
+          {
+            model: FinCostCenter,
+            as: 'finCostCenter',
+            attributes: ['id', 'id_code', 'name', 'code']
+          }
+        ]
+      });
 
       const creator = await User.findByPk(transaction.created_by_user_id, {
         attributes: ['id_code']
@@ -950,7 +1124,9 @@ router.patch(
           status: transaction.status,
           party_id: transaction.party_id,
           cost_center: transaction.cost_center,
+          cost_center_id: transaction.cost_center_id,
           category: transaction.category,
+          category_id: transaction.category_id,
           is_paid: transaction.is_paid,
           payment_method: transaction.payment_method,
           bank_account_id: transaction.bank_account_id,
@@ -958,7 +1134,23 @@ router.patch(
           store_id: transaction.store_id,
           approved_by: transaction.approved_by,
           created_by: creator ? creator.id_code : null,
-          attachments: responseAttachments
+          attachments: responseAttachments,
+          tags: transaction.tags ? transaction.tags.map(t => ({
+            id: t.id_code,
+            name: t.name,
+            color: t.color
+          })) : [],
+          category_data: transaction.finCategory ? {
+            id: transaction.finCategory.id_code,
+            name: transaction.finCategory.name,
+            color: transaction.finCategory.color,
+            icon: transaction.finCategory.icon
+          } : null,
+          cost_center_data: transaction.finCostCenter ? {
+            id: transaction.finCostCenter.id_code,
+            name: transaction.finCostCenter.name,
+            code: transaction.finCostCenter.code
+          } : null
         }
       });
     } catch (error) {

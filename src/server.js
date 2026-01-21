@@ -35,6 +35,11 @@ const eventJamsRoutes = require('./routes/eventJams');
 const uploadRoutes = require('./routes/upload');
 const filesRoutes = require('./routes/files');
 const financialRoutes = require('./routes/financial');
+const bankAccountRoutes = require('./routes/bankAccounts');
+const partyRoutes = require('./routes/parties');
+const finCategoryRoutes = require('./routes/finCategories');
+const finCostCenterRoutes = require('./routes/finCostCenters');
+const finTagRoutes = require('./routes/finTags');
 
 // Import middleware
 const errorHandler = require('./middlewares/errorHandler');
@@ -236,6 +241,11 @@ app.use('/api/events', eventJamsRoutes);
 app.use('/api/public/v1/events', eventJamsRoutes);
 app.use('/api/v1/uploads', uploadRoutes);
 app.use('/api/v1/files', filesRoutes);
+app.use('/api/v1/financial/bank-accounts', bankAccountRoutes);
+app.use('/api/v1/financial/parties', partyRoutes);
+app.use('/api/v1/financial/categories', finCategoryRoutes);
+app.use('/api/v1/financial/cost-centers', finCostCenterRoutes);
+app.use('/api/v1/financial/tags', finTagRoutes);
 app.use('/api/v1/financial', financialRoutes);
 
 // Swagger (apenas dev)
