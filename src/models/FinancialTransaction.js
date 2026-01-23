@@ -71,9 +71,17 @@ const FinancialTransaction = sequelize.define('FinancialTransaction', {
     defaultValue: false
   },
   status: {
-    type: DataTypes.ENUM('pending', 'approved', 'scheduled', 'paid', 'overdue', 'canceled'),
+    type: DataTypes.ENUM('pending', 'approved', 'scheduled', 'paid', 'overdue', 'canceled', 'provisioned'),
     allowNull: false,
     defaultValue: 'pending'
+  },
+  recurrence_id: {
+    type: DataTypes.STRING(255),
+    allowNull: true,
+    references: {
+      model: 'fin_recurrences',
+      key: 'id_code'
+    }
   },
   payment_method: {
     type: DataTypes.ENUM('cash', 'pix', 'credit_card', 'debit_card', 'bank_transfer', 'boleto'),

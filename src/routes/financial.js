@@ -8,7 +8,7 @@ const { URL } = require('url');
 const router = express.Router();
 
 const VALID_TYPES = ['PAYABLE', 'RECEIVABLE', 'TRANSFER', 'ADJUSTMENT'];
-const VALID_STATUS = ['pending', 'approved', 'scheduled', 'paid', 'overdue', 'canceled'];
+const VALID_STATUS = ['pending', 'approved', 'scheduled', 'paid', 'overdue', 'canceled', 'provisioned'];
 const VALID_PAYMENT_METHODS = ['cash', 'pix', 'credit_card', 'debit_card', 'bank_transfer', 'boleto'];
 const BANK_MOVEMENT_METHODS = ['pix', 'bank_transfer', 'boleto'];
 
@@ -319,11 +319,13 @@ router.get(
       const summary = {
         payable: {
           pending: 0,
-          paid: 0
+          paid: 0,
+          provisioned: 0
         },
         receivable: {
           pending: 0,
-          paid: 0
+          paid: 0,
+          provisioned: 0
         },
         overdue: 0,
         total_paid: 0
@@ -338,20 +340,20 @@ router.get(
           return;
         }
 
-        // Populate payable/receivable pending/paid
+        // Populate payable/receivable pending/paid/provisioned
         if (type === 'PAYABLE') {
-          if (status === 'pending' || status === 'scheduled' || status === 'approved') {
+          if (status === 'provisioned') {
+            summary.payable.provisioned += amount;
+          } else if (status === 'pending' || status === 'scheduled' || status === 'approved') {
             summary.payable.pending += amount;
           } else if (status === 'paid') {
             summary.payable.paid += amount;
-            summary.total_paid += amount; // Assuming total_paid sums outgoing payments too? Or should it separate?
-            // Usually "total paid" in a financial context might mean "Total Payments Made" (outflow)
-            // But if we include RECEIVABLE paid, it would be "Total Receipts"
-            // The user example had total_paid = 3789.10 which was 3000 (rec.paid) + 789.10 (pay.paid)
-            // So it seems to be the sum of all settled transactions, regardless of direction.
+            summary.total_paid += amount;
           }
         } else if (type === 'RECEIVABLE') {
-          if (status === 'pending' || status === 'scheduled' || status === 'approved') {
+          if (status === 'provisioned') {
+            summary.receivable.provisioned += amount;
+          } else if (status === 'pending' || status === 'scheduled' || status === 'approved') {
             summary.receivable.pending += amount;
           } else if (status === 'paid') {
             summary.receivable.paid += amount;
@@ -359,8 +361,6 @@ router.get(
           }
         }
 
-        // Calculate overdue
-        // Assuming 'overdue' status is explicitly set by a background job or logic
         if (status === 'overdue') {
           summary.overdue += amount;
           // Also add to pending payable/receivable? 
@@ -373,8 +373,12 @@ router.get(
       // Fix rounding issues
       summary.payable.pending = parseFloat(summary.payable.pending.toFixed(2));
       summary.payable.paid = parseFloat(summary.payable.paid.toFixed(2));
+      summary.payable.provisioned = parseFloat(summary.payable.provisioned.toFixed(2));
+      
       summary.receivable.pending = parseFloat(summary.receivable.pending.toFixed(2));
       summary.receivable.paid = parseFloat(summary.receivable.paid.toFixed(2));
+      summary.receivable.provisioned = parseFloat(summary.receivable.provisioned.toFixed(2));
+      
       summary.overdue = parseFloat(summary.overdue.toFixed(2));
       summary.total_paid = parseFloat(summary.total_paid.toFixed(2));
 

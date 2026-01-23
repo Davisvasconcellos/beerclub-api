@@ -1,9 +1,12 @@
 const express = require('express');
 const { body, validationResult } = require('express-validator');
+const { Op } = require('sequelize');
 const { authenticateToken } = require('../middlewares/auth');
-const { BankAccount, FinancialTransaction, sequelize } = require('../models');
+const { BankAccount, FinancialTransaction, sequelize, FinCategory, FinCostCenter, Party, FinTag } = require('../models');
 
 const router = express.Router();
+
+const VALID_PAYMENT_METHODS = ['cash', 'pix', 'credit_card', 'debit_card', 'bank_transfer', 'boleto'];
 
 /**
  * @swagger
@@ -82,8 +85,24 @@ router.get('/', authenticateToken, async (req, res) => {
       // Remove transactions list from response to keep it clean
       delete acc.transactions;
       
+      // Ensure allowed_payment_methods is an array
+      let allowedMethods = acc.allowed_payment_methods;
+      if (typeof allowedMethods === 'string') {
+        try {
+          allowedMethods = JSON.parse(allowedMethods);
+        } catch (e) {
+          allowedMethods = [];
+        }
+      }
+      if (!Array.isArray(allowedMethods)) allowedMethods = [];
+
+      const accountNumber = acc.account_digit ? `${acc.account_number}-${acc.account_digit}` : acc.account_number;
+      const label = `${acc.name} - ${accountNumber}`;
+
       return {
         ...acc,
+        label,
+        allowed_payment_methods: allowedMethods,
         current_balance: parseFloat(currentBalance.toFixed(2))
       };
     });
@@ -105,10 +124,122 @@ router.get('/:id_code', authenticateToken, async (req, res) => {
       return res.status(404).json({ error: 'Conta bancária não encontrada' });
     }
 
-    res.json(account);
+    const acc = account.toJSON();
+    // Ensure allowed_payment_methods is an array
+    let allowedMethods = acc.allowed_payment_methods;
+    if (typeof allowedMethods === 'string') {
+      try {
+        allowedMethods = JSON.parse(allowedMethods);
+      } catch (e) {
+        allowedMethods = [];
+      }
+    }
+    if (!Array.isArray(allowedMethods)) allowedMethods = [];
+    acc.allowed_payment_methods = allowedMethods;
+
+    res.json(acc);
   } catch (error) {
     console.error('Error fetching bank account:', error);
     res.status(500).json({ error: 'Erro ao buscar conta bancária' });
+  }
+});
+
+// GET /api/v1/financial/bank-accounts/:id_code/transactions
+router.get('/:id_code/transactions', authenticateToken, async (req, res) => {
+  try {
+    const { id_code } = req.params;
+    const { 
+      start_date, 
+      end_date, 
+      type, 
+      description, 
+      category_id, 
+      party_id, 
+      cost_center_id 
+    } = req.query;
+
+    const account = await BankAccount.findOne({ where: { id_code } });
+
+    if (!account) {
+      return res.status(404).json({ error: 'Conta bancária não encontrada' });
+    }
+
+    const where = {
+      bank_account_id: id_code,
+      status: 'paid',
+      is_deleted: false
+    };
+
+    // Date filters
+    if (start_date && end_date) {
+      where.paid_at = {
+        [Op.between]: [start_date, end_date]
+      };
+    } else if (start_date) {
+      where.paid_at = {
+        [Op.gte]: start_date
+      };
+    } else if (end_date) {
+      where.paid_at = {
+        [Op.lte]: end_date
+      };
+    }
+
+    // Additional filters
+    if (type) {
+      where.type = type;
+    }
+
+    if (description) {
+      where.description = {
+        [Op.like]: `%${description}%`
+      };
+    }
+
+    if (category_id) {
+      where.category_id = category_id;
+    }
+
+    if (party_id) {
+      where.party_id = party_id;
+    }
+
+    if (cost_center_id) {
+      where.cost_center_id = cost_center_id;
+    }
+
+    const transactions = await FinancialTransaction.findAll({
+      where,
+      order: [['paid_at', 'DESC'], ['created_at', 'DESC']],
+      include: [
+        {
+          model: FinCategory,
+          as: 'finCategory',
+          attributes: ['id_code', 'name', 'color', 'icon']
+        },
+        {
+          model: Party,
+          as: 'party',
+          attributes: ['id_code', 'name']
+        },
+        {
+          model: FinCostCenter,
+          as: 'finCostCenter',
+          attributes: ['id_code', 'name', 'code']
+        },
+        {
+          model: FinTag,
+          as: 'tags',
+          attributes: ['id_code', 'name', 'color'],
+          through: { attributes: [] }
+        }
+      ]
+    });
+
+    res.json(transactions);
+  } catch (error) {
+    console.error('Error fetching bank account transactions:', error);
+    res.status(500).json({ error: 'Erro ao buscar lançamentos da conta bancária' });
   }
 });
 
@@ -119,7 +250,14 @@ router.post('/', [
   body('bank_name').notEmpty().withMessage('Nome do banco é obrigatório'),
   body('agency').notEmpty().withMessage('Agência é obrigatória'),
   body('account_number').notEmpty().withMessage('Número da conta é obrigatório'),
-  body('type').isIn(['checking', 'savings', 'investment', 'payment', 'other']).withMessage('Tipo de conta inválido')
+  body('type').isIn(['checking', 'savings', 'investment', 'payment', 'cash', 'credit_card', 'other']).withMessage('Tipo de conta inválido'),
+  body('allowed_payment_methods').optional().isArray().withMessage('Métodos de pagamento permitidos deve ser uma lista')
+    .custom((value) => {
+      if (!value) return true;
+      const invalid = value.filter(m => !VALID_PAYMENT_METHODS.includes(m));
+      if (invalid.length > 0) throw new Error(`Métodos inválidos: ${invalid.join(', ')}`);
+      return true;
+    })
 ], async (req, res) => {
   const errors = validationResult(req);
   if (!errors.isEmpty()) {
@@ -129,7 +267,7 @@ router.post('/', [
   try {
     const { 
       name, bank_name, bank_code, agency, account_number, account_digit, 
-      type, initial_balance, store_id, is_active, is_default 
+      type, initial_balance, store_id, is_active, is_default, allowed_payment_methods 
     } = req.body;
 
     const result = await sequelize.transaction(async (t) => {
@@ -145,6 +283,7 @@ router.post('/', [
         store_id,
         is_active: is_active !== undefined ? is_active : true,
         is_default: is_default !== undefined ? is_default : false,
+        allowed_payment_methods: allowed_payment_methods || [],
         created_by: req.user.userId
       }, { transaction: t });
 
@@ -180,7 +319,14 @@ router.post('/', [
 router.put('/:id_code', [
   authenticateToken,
   body('name').optional().notEmpty().withMessage('Nome da conta não pode ser vazio'),
-  body('type').optional().isIn(['checking', 'savings', 'investment', 'payment', 'other']).withMessage('Tipo de conta inválido')
+  body('type').optional().isIn(['checking', 'savings', 'investment', 'payment', 'cash', 'credit_card', 'other']).withMessage('Tipo de conta inválido'),
+  body('allowed_payment_methods').optional().isArray().withMessage('Métodos de pagamento permitidos deve ser uma lista')
+    .custom((value) => {
+      if (!value) return true;
+      const invalid = value.filter(m => !VALID_PAYMENT_METHODS.includes(m));
+      if (invalid.length > 0) throw new Error(`Métodos inválidos: ${invalid.join(', ')}`);
+      return true;
+    })
 ], async (req, res) => {
   const errors = validationResult(req);
   if (!errors.isEmpty()) {
@@ -197,22 +343,24 @@ router.put('/:id_code', [
 
     const { 
       name, bank_name, bank_code, agency, account_number, account_digit, 
-      type, initial_balance, store_id, is_active, is_default 
+      type, initial_balance, store_id, is_active, is_default, allowed_payment_methods 
     } = req.body;
 
-    await account.update({
-      name: name !== undefined ? name : account.name,
-      bank_name: bank_name !== undefined ? bank_name : account.bank_name,
-      bank_code: bank_code !== undefined ? bank_code : account.bank_code,
-      agency: agency !== undefined ? agency : account.agency,
-      account_number: account_number !== undefined ? account_number : account.account_number,
-      account_digit: account_digit !== undefined ? account_digit : account.account_digit,
-      type: type !== undefined ? type : account.type,
-      initial_balance: initial_balance !== undefined ? initial_balance : account.initial_balance,
-      store_id: store_id !== undefined ? store_id : account.store_id,
-      is_active: is_active !== undefined ? is_active : account.is_active,
-      is_default: is_default !== undefined ? is_default : account.is_default,
-    });
+    // Build update object
+    const updateData = {};
+    if (name) updateData.name = name;
+    if (bank_name) updateData.bank_name = bank_name;
+    if (bank_code) updateData.bank_code = bank_code;
+    if (agency) updateData.agency = agency;
+    if (account_number) updateData.account_number = account_number;
+    if (account_digit) updateData.account_digit = account_digit;
+    if (type) updateData.type = type;
+    if (store_id) updateData.store_id = store_id;
+    if (is_active !== undefined) updateData.is_active = is_active;
+    if (is_default !== undefined) updateData.is_default = is_default;
+    if (allowed_payment_methods) updateData.allowed_payment_methods = allowed_payment_methods;
+
+    await account.update(updateData);
 
     res.json(account);
   } catch (error) {

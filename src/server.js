@@ -35,6 +35,7 @@ const eventJamsRoutes = require('./routes/eventJams');
 const uploadRoutes = require('./routes/upload');
 const filesRoutes = require('./routes/files');
 const financialRoutes = require('./routes/financial');
+const finRecurrenceRoutes = require('./routes/finRecurrences');
 const bankAccountRoutes = require('./routes/bankAccounts');
 const partyRoutes = require('./routes/parties');
 const finCategoryRoutes = require('./routes/finCategories');
@@ -246,6 +247,7 @@ app.use('/api/v1/financial/parties', partyRoutes);
 app.use('/api/v1/financial/categories', finCategoryRoutes);
 app.use('/api/v1/financial/cost-centers', finCostCenterRoutes);
 app.use('/api/v1/financial/tags', finTagRoutes);
+app.use('/api/v1/financial/recurrences', finRecurrenceRoutes);
 app.use('/api/v1/financial', financialRoutes);
 
 // Swagger (apenas dev)

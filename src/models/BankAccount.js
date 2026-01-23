@@ -39,9 +39,15 @@ const BankAccount = sequelize.define('BankAccount', {
     allowNull: true
   },
   type: {
-    type: DataTypes.ENUM('checking', 'savings', 'investment', 'payment', 'other'),
+    type: DataTypes.ENUM('checking', 'savings', 'investment', 'payment', 'cash', 'credit_card', 'other'),
     allowNull: false,
     defaultValue: 'checking'
+  },
+  allowed_payment_methods: {
+    type: DataTypes.JSON,
+    allowNull: true,
+    defaultValue: [] // Default to empty array, meaning "all" or "none" depending on logic. Usually explicit list is better.
+    // Or we can default to null. Let's stick to simple JSON array.
   },
   initial_balance: {
     type: DataTypes.DECIMAL(15, 2),

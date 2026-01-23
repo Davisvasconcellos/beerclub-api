@@ -29,6 +29,7 @@ const Party = require('./Party');
 const FinCategory = require('./FinCategory');
 const FinCostCenter = require('./FinCostCenter');
 const FinTag = require('./FinTag');
+const FinRecurrence = require('./FinRecurrence');
 
 // Define associations
 
@@ -197,6 +198,22 @@ FinTag.belongsToMany(FinancialTransaction, {
   as: 'transactions'
 });
 
+// FinRecurrence associations
+FinRecurrence.hasMany(FinancialTransaction, { foreignKey: 'recurrence_id', sourceKey: 'id_code', as: 'transactions' });
+FinancialTransaction.belongsTo(FinRecurrence, { foreignKey: 'recurrence_id', targetKey: 'id_code', as: 'recurrence' });
+
+FinRecurrence.belongsTo(Store, { foreignKey: 'store_id', targetKey: 'id_code', as: 'store' });
+Store.hasMany(FinRecurrence, { foreignKey: 'store_id', sourceKey: 'id_code', as: 'finRecurrences' });
+
+FinRecurrence.belongsTo(FinCategory, { foreignKey: 'category_id', targetKey: 'id_code', as: 'finCategory' });
+FinCategory.hasMany(FinRecurrence, { foreignKey: 'category_id', sourceKey: 'id_code', as: 'recurrences' });
+
+FinRecurrence.belongsTo(FinCostCenter, { foreignKey: 'cost_center_id', targetKey: 'id_code', as: 'finCostCenter' });
+FinCostCenter.hasMany(FinRecurrence, { foreignKey: 'cost_center_id', sourceKey: 'id_code', as: 'recurrences' });
+
+FinRecurrence.belongsTo(Party, { foreignKey: 'party_id', targetKey: 'id_code', as: 'party' });
+Party.hasMany(FinRecurrence, { foreignKey: 'party_id', sourceKey: 'id_code', as: 'recurrences' });
+
 module.exports = {
   sequelize,
   Plan,
@@ -227,4 +244,5 @@ module.exports = {
   ,FinCategory
   ,FinCostCenter
   ,FinTag
+  ,FinRecurrence
 };
