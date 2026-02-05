@@ -1,6 +1,6 @@
 const express = require('express');
 const { body, validationResult } = require('express-validator');
-const { authenticateToken, requireRole } = require('../middlewares/auth');
+const { authenticateToken, requireRole, requireModule } = require('../middlewares/auth');
 const { sequelize } = require('../config/database');
 const { Op, fn, col } = require('sequelize');
 const { Event, EventQuestion, EventResponse, EventAnswer, User, EventGuest, TokenBlocklist } = require('../models');
@@ -158,7 +158,7 @@ function formatDuplicateError(error) {
  *         description: Evento criado com sucesso
  */
 // POST /api/v1/events - Cria evento + perguntas
-router.post('/', authenticateToken, requireRole('admin', 'master'), [
+router.post('/', authenticateToken, requireRole('admin', 'master'), requireModule('events'), [
   body('name').isLength({ min: 2 }).withMessage('Nome é obrigatório.'),
   body('slug').isLength({ min: 2 }).withMessage('Slug é obrigatório.'),
   body('banner_url').optional().isURL({ require_tld: false }).withMessage('banner_url inválida'),
@@ -402,7 +402,7 @@ router.post('/', authenticateToken, requireRole('admin', 'master'), [
  *         description: Lista paginada de eventos
  */
 // GET /api/v1/events - Lista eventos do admin (ou todos se master) com paginação/filtros
-router.get('/', authenticateToken, requireRole('admin', 'master'), async (req, res) => {
+router.get('/', authenticateToken, requireRole('admin', 'master'), requireModule('events'), async (req, res) => {
   try {
     const isMaster = req.user.role === 'master';
 
@@ -501,7 +501,7 @@ router.get('/', authenticateToken, requireRole('admin', 'master'), async (req, r
  *         description: Evento não encontrado
  */
 // GET /api/v1/events/:id - Detalhes do evento + perguntas ordenadas + total_responses
-router.get('/:id', authenticateToken, requireRole('admin', 'master'), async (req, res) => {
+router.get('/:id', authenticateToken, requireRole('admin', 'master'), requireModule('events'), async (req, res) => {
   try {
     const { id } = req.params;
 
@@ -570,7 +570,7 @@ router.get('/:id', authenticateToken, requireRole('admin', 'master'), async (req
  *         description: Slug já existe
  */
 // PATCH /api/v1/events/:id - Atualiza apenas campos enviados, valida slug único
-router.patch('/:id', authenticateToken, requireRole('admin', 'master'), [
+router.patch('/:id', authenticateToken, requireRole('admin', 'master'), requireModule('events'), [
   body('name').optional().isLength({ min: 2 }),
   body('slug').optional().isLength({ min: 2 }),
   body('banner_url').optional().isURL({ require_tld: false }).withMessage('banner_url inválida'),
@@ -712,7 +712,7 @@ router.delete('/:id', authenticateToken, requireRole('admin', 'master'), async (
  *       404:
  *         description: Evento não encontrado
  */
-router.get('/:id/questions', authenticateToken, requireRole('admin', 'master'), async (req, res) => {
+router.get('/:id/questions', authenticateToken, requireRole('admin', 'master'), requireModule('events'), async (req, res) => {
   try {
     const { id } = req.params;
     const event = await Event.findOne({ where: { id_code: id } });
@@ -1114,7 +1114,7 @@ router.get('/:id/stats', authenticateToken, requireRole('admin', 'master'), asyn
  *       404:
  *         description: Evento não encontrado
  */
-router.post('/:id/questions', authenticateToken, requireRole('admin', 'master'), [
+router.post('/:id/questions', authenticateToken, requireRole('admin', 'master'), requireModule('events'), [
   body('text').isLength({ min: 1 }).withMessage('text é obrigatório'),
   body('type').isIn(['text', 'textarea', 'radio', 'checkbox', 'rating', 'music_preference', 'auto_checkin']).withMessage('type inválido'),
   body('options').optional(),
@@ -1393,7 +1393,7 @@ router.patch('/:id/questions/:questionId', authenticateToken, requireRole('admin
  *       404:
  *         description: Evento/Pergunta não encontrado
  */
-router.delete('/:id/questions/:questionId', authenticateToken, requireRole('admin', 'master'), async (req, res) => {
+router.delete('/:id/questions/:questionId', authenticateToken, requireRole('admin', 'master'), requireModule('events'), async (req, res) => {
   try {
     const { id, questionId } = req.params;
     const event = await Event.findOne({ where: { id_code: id } });
@@ -1449,7 +1449,7 @@ router.delete('/:id/questions/:questionId', authenticateToken, requireRole('admi
  *       200:
  *         description: Possíveis matches para check-in
  */
-router.post('/:id/checkin/lookup', authenticateToken, requireRole('admin', 'master'), async (req, res) => {
+router.post('/:id/checkin/lookup', authenticateToken, requireRole('admin', 'master'), requireModule('events'), async (req, res) => {
   try {
     const { id } = req.params;
     const { query } = req.body;
@@ -1543,7 +1543,7 @@ router.post('/:id/checkin/confirm', authenticateToken, requireRole('admin', 'mas
  *       201:
  *         description: Convidado criado com check-in
  */
-router.post('/:id/checkin/manual', authenticateToken, requireRole('admin', 'master'), async (req, res) => {
+router.post('/:id/checkin/manual', authenticateToken, requireRole('admin', 'master'), requireModule('events'), async (req, res) => {
   try {
     const { id } = req.params;
     const event = await Event.findOne({ where: { id_code: id } });
@@ -1759,7 +1759,7 @@ router.patch('/:id/guests/:guestId', authenticateToken, requireRole('admin', 'ma
  *       200:
  *         description: Lista unificada de convidados
  */
-router.get('/:id/guests', authenticateToken, requireRole('admin', 'master'), async (req, res) => {
+router.get('/:id/guests', authenticateToken, requireRole('admin', 'master'), requireModule('events'), async (req, res) => {
   try {
     const { id } = req.params;
     const event = await Event.findOne({ where: { id_code: id } });
@@ -2760,7 +2760,7 @@ router.get('/:id/responses', authenticateToken, requireRole('admin', 'master'), 
  *         description: Evento não encontrado
  */
 // GET /api/v1/events/:id/responses/export — CSV das respostas do evento (admin/master)
-router.get('/:id/responses/export', authenticateToken, requireRole('admin', 'master'), async (req, res) => {
+router.get('/:id/responses/export', authenticateToken, requireRole('admin', 'master'), requireModule('events'), async (req, res) => {
   try {
     const { id } = req.params;
     const event = await Event.findOne({ where: { id_code: id }, include: [{ model: EventQuestion, as: 'questions', order: [['order_index', 'ASC']] }] });

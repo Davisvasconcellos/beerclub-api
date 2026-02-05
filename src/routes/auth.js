@@ -117,6 +117,12 @@ router.post('/login', [
           model: FootballTeam,
           as: 'team',
           attributes: ['name', 'short_name', 'abbreviation', 'shield']
+        },
+        {
+          model: require('../models').SysModule,
+          as: 'modules',
+          attributes: ['id', 'id_code', 'name', 'slug', 'active'],
+          through: { attributes: [] }
         }
       ]
     });
@@ -415,6 +421,12 @@ router.get('/me', authenticateToken, async (req, res) => {
           model: FootballTeam,
           as: 'team',
           attributes: ['name', 'short_name', 'abbreviation', 'shield']
+        },
+        {
+          model: require('../models').SysModule,
+          as: 'modules',
+          attributes: ['id', 'id_code', 'name', 'slug', 'active'],
+          through: { attributes: [] }
         }
       ]
     });

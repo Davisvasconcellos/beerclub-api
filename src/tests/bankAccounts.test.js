@@ -8,6 +8,9 @@ jest.mock('../middlewares/auth', () => ({
   },
   requireRole: (...roles) => (req, res, next) => {
     next();
+  },
+  requireModule: (moduleSlug) => (req, res, next) => {
+    next();
   }
 }));
 

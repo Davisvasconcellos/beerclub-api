@@ -1,7 +1,7 @@
 const express = require('express');
 const { body, validationResult } = require('express-validator');
 const { Op } = require('sequelize');
-const { authenticateToken } = require('../middlewares/auth');
+const { authenticateToken, requireModule } = require('../middlewares/auth');
 const { BankAccount, FinancialTransaction, sequelize, FinCategory, FinCostCenter, Party, FinTag } = require('../models');
 
 const router = express.Router();
@@ -31,7 +31,7 @@ const VALID_PAYMENT_METHODS = ['cash', 'pix', 'credit_card', 'debit_card', 'bank
  */
 
 // GET /api/v1/financial/bank-accounts
-router.get('/', authenticateToken, async (req, res) => {
+router.get('/', authenticateToken, requireModule('financial'), async (req, res) => {
   try {
     const { store_id } = req.query;
     const where = {};

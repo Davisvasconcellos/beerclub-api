@@ -1,6 +1,6 @@
 const express = require('express');
 const { body, query, validationResult } = require('express-validator');
-const { authenticateToken, requireRole } = require('../middlewares/auth');
+const { authenticateToken, requireRole, requireModule } = require('../middlewares/auth');
 const { FinancialTransaction, User, FinTag, FinCategory, FinCostCenter, Party } = require('../models');
 const { Op, Sequelize } = require('sequelize');
 const { URL } = require('url');
@@ -132,6 +132,7 @@ const parseAttachmentsFromRequestBody = (body, existingRaw) => {
 router.get(
   '/transactions',
   authenticateToken,
+  requireModule('financial'),
   requireRole('admin', 'manager', 'master'),
   [
     query('page').optional().isInt({ min: 1 }).toInt(),
@@ -408,6 +409,7 @@ router.get(
 router.post(
   '/transactions',
   authenticateToken,
+  requireModule('financial'),
   requireRole('admin', 'manager', 'master'),
   [
     body('type')
@@ -705,6 +707,7 @@ router.post(
 router.patch(
   '/transactions/:id_code',
   authenticateToken,
+  requireModule('financial'),
   requireRole('admin', 'manager', 'master'),
   [
     body('type')

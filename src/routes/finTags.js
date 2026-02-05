@@ -1,13 +1,13 @@
 const express = require('express');
 const { body, validationResult } = require('express-validator');
-const { authenticateToken } = require('../middlewares/auth');
+const { authenticateToken, requireModule } = require('../middlewares/auth');
 const { FinTag } = require('../models');
 const { Op } = require('sequelize');
 
 const router = express.Router();
 
 // GET /api/v1/financial/tags
-router.get('/', authenticateToken, async (req, res) => {
+router.get('/', authenticateToken, requireModule('financial'), async (req, res) => {
   try {
     const { store_id, status } = req.query;
     const where = {};
@@ -38,6 +38,7 @@ router.get('/', authenticateToken, async (req, res) => {
 // POST /api/v1/financial/tags
 router.post('/', [
   authenticateToken,
+  requireModule('financial'),
   body('name').notEmpty().withMessage('Nome é obrigatório'),
   body('store_id').notEmpty().withMessage('ID da loja é obrigatório')
 ], async (req, res) => {

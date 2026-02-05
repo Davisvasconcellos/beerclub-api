@@ -1,7 +1,7 @@
 const express = require('express');
 const { body, validationResult } = require('express-validator');
 const { Product, Category, Bar } = require('../models');
-const { requireRole } = require('../middlewares/auth');
+const { requireRole, authenticateToken, requireModule } = require('../middlewares/auth');
 
 const router = express.Router();
 
@@ -34,7 +34,7 @@ const router = express.Router();
  *       200:
  *         description: Lista de produtos
  */
-router.get('/', async (req, res) => {
+router.get('/', authenticateToken, requireModule('pub'), async (req, res) => {
   try {
     const { page = 1, limit = 10, categoryId, search } = req.query;
     const offset = (page - 1) * limit;
@@ -109,7 +109,7 @@ router.get('/', async (req, res) => {
  *       200:
  *         description: Dados do produto
  */
-router.get('/:id', async (req, res) => {
+router.get('/:id', authenticateToken, requireModule('pub'), async (req, res) => {
   try {
     const { id } = req.params;
 
@@ -184,7 +184,7 @@ router.get('/:id', async (req, res) => {
  *       201:
  *         description: Produto criado com sucesso
  */
-router.post('/', requireRole('admin', 'gerente'), [
+router.post('/', requireRole('admin', 'gerente'), requireModule('pub'), [
   body('name').isLength({ min: 2, max: 100 }).trim().withMessage('O nome deve ter entre 2 e 100 caracteres'),
   body('description').optional().isLength({ max: 500 }).withMessage('A descrição não pode exceder 500 caracteres'),
   body('price').isFloat({ min: 0 }).withMessage('O preço deve ser um número válido'),

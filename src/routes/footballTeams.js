@@ -1,6 +1,6 @@
 const express = require('express');
 const { FootballTeam } = require('../models');
-const { authenticateToken } = require('../middlewares/auth');
+const { authenticateToken, requireModule } = require('../middlewares/auth');
 
 const router = express.Router();
 
@@ -29,7 +29,7 @@ const router = express.Router();
  *       401:
  *         description: Não autenticado
  */
-router.get('/', authenticateToken, async (req, res) => {
+router.get('/', authenticateToken, requireModule('pub'), async (req, res) => {
   try {
     const teams = await FootballTeam.findAll({
       order: [['name', 'ASC']]

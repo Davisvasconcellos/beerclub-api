@@ -1,6 +1,6 @@
 const express = require('express');
 const { body, validationResult } = require('express-validator');
-const { authenticateToken, requireRole } = require('../middlewares/auth');
+const { authenticateToken, requireRole, requireModule } = require('../middlewares/auth');
 const jwt = require('jsonwebtoken');
 const { Op } = require('sequelize');
 const { Event, EventJam, EventJamSong, EventJamSongInstrumentSlot, EventJamSongCandidate, EventJamSongRating, EventGuest, User } = require('../models');
@@ -45,7 +45,7 @@ router.get('/:id/jams/:jamId/stream', (req, res) => {
   });
 });
 
-router.get('/:id/jams', authenticateToken, requireRole('admin', 'master'), async (req, res) => {
+router.get('/:id/jams', authenticateToken, requireRole('admin', 'master'), requireModule('events'), async (req, res) => {
   const { id } = req.params;
   const event = await Event.findOne({ where: { id_code: id } });
   if (!event) return res.status(404).json({ error: 'Not Found', message: 'Evento não encontrado' });

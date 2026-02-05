@@ -200,4 +200,13 @@ User.findByRole = function(role) {
   return this.findAll({ where: { role } });
 };
 
+// Associações
+User.associate = (models) => {
+  User.belongsToMany(models.SysModule, {
+    foreignKey: 'user_id',
+    through: 'sys_user_modules',
+    as: 'modules'
+  });
+};
+
 module.exports = User;

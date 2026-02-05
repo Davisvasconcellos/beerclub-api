@@ -1,7 +1,7 @@
 const express = require('express');
 const { body, validationResult } = require('express-validator');
 const { sequelize, Store, User, Product, StoreUser, StoreSchedule } = require('../models');
-const { authenticateToken, requireRole } = require('../middlewares/auth');
+const { authenticateToken, requireRole, requireModule } = require('../middlewares/auth');
 
 const router = express.Router();
 
@@ -249,7 +249,7 @@ router.get('/:id_code', authenticateToken, async (req, res) => {
  */
 router.post('/', 
   authenticateToken,
-  requireRole(['admin']),
+  requireModule('pub'),
   [
     // Validações existentes
     body('name').trim().isLength({ min: 2, max: 255 }).withMessage('Nome deve ter entre 2 e 255 caracteres'),
@@ -451,10 +451,7 @@ router.post('/',
  *       200:
  *         description: Loja atualizada com sucesso
  */
-router.put('/:id_code',
-  authenticateToken,
-  requireRole(['admin', 'manager']),
-  [
+router.put('/:id_code', authenticateToken, requireRole(['admin', 'manager']), [
     // Campos originais
     body('name').optional().trim().isLength({ min: 2, max: 255 }).withMessage('Nome deve ter entre 2 e 255 caracteres'),
     body('email').optional().isEmail().withMessage('Email inválido'),

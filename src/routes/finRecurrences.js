@@ -1,6 +1,6 @@
 const express = require('express');
 const { body, query, validationResult } = require('express-validator');
-const { authenticateToken, requireRole } = require('../middlewares/auth');
+const { authenticateToken, requireRole, requireModule } = require('../middlewares/auth');
 const { FinRecurrence, FinCategory, FinCostCenter, Party, User, Store } = require('../models');
 const { Op } = require('sequelize');
 const { generatePendingTransactions } = require('../services/recurrenceService');
@@ -15,6 +15,7 @@ const VALID_STATUS = ['active', 'paused', 'finished'];
 router.post(
   '/generate',
   authenticateToken,
+  requireModule('financial'),
   async (req, res) => {
     try {
       const { target_date } = req.body;
@@ -37,6 +38,7 @@ router.post(
 router.post(
   '/',
   authenticateToken,
+  requireModule('financial'),
   [
     body('store_id').notEmpty().withMessage('Store ID is required'),
     body('type').isIn(VALID_TYPES).withMessage(`Invalid type. Allowed: ${VALID_TYPES.join(', ')}`),

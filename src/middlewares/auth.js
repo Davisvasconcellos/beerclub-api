@@ -62,11 +62,55 @@ const requireRole = (...roles) => {
     }
 
     console.log('Acesso negado para role:', req.user.role);
-    return res.status(403).json({ message: 'Acesso negado' });
+    return res.status(403).json({ 
+      error: 'Forbidden',
+      message: `Acesso negado. Seu perfil (${req.user.role}) não possui permissão para este recurso.`,
+      required_roles: [...roles, ...highPrivilegeRoles]
+    });
+  };
+};
+
+// Middleware para verificar acesso a módulos
+const requireModule = (moduleSlug) => {
+  return async (req, res, next) => {
+    try {
+      if (!req.user) {
+        return res.status(401).json({ message: 'Não autenticado' });
+      }
+
+      // Master/Admin sempre acessa tudo
+      const highPrivilegeRoles = ['admin', 'master', 'masteradmin'];
+      if (highPrivilegeRoles.includes(req.user.role)) {
+        return next();
+      }
+
+      const user = await User.findByPk(req.user.userId, {
+        include: [{ 
+          model: require('../models').SysModule,
+          as: 'modules',
+          where: { slug: moduleSlug, active: true },
+          required: false 
+        }]
+      });
+
+      // Se encontrou o módulo na lista do usuário
+      if (user && user.modules && user.modules.length > 0) {
+        return next();
+      }
+
+      return res.status(403).json({ 
+        error: 'Forbidden',
+        message: `Acesso negado. Seu usuário (role: ${req.user.role}) não possui o módulo '${moduleSlug}' ativo.` 
+      });
+    } catch (error) {
+      console.error('Erro ao verificar permissão de módulo:', error);
+      return res.status(500).json({ message: 'Erro interno de verificação de permissão' });
+    }
   };
 };
 
 module.exports = {
   authenticateToken,
-  requireRole
+  requireRole,
+  requireModule
 };

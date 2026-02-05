@@ -6,6 +6,58 @@ const { requireRole, authenticateToken } = require('../middlewares/auth');
 
 const router = express.Router();
 
+// Listar todos os usuários (Master/Admin)
+router.get('/', authenticateToken, requireRole('master', 'masteradmin', 'admin'), async (req, res) => {
+  try {
+    const { page = 1, limit = 20, search } = req.query;
+    const offset = (page - 1) * limit;
+
+    const where = {};
+    if (search) {
+      where[Op.or] = [
+        { name: { [Op.like]: `%${search}%` } },
+        { email: { [Op.like]: `%${search}%` } }
+      ];
+    }
+
+    const { count, rows } = await User.findAndCountAll({
+      where,
+      limit: parseInt(limit),
+      offset: parseInt(offset),
+      order: [['created_at', 'DESC']],
+      attributes: { exclude: ['password_hash'] },
+      include: [
+        {
+          model: Plan,
+          as: 'plan',
+          attributes: ['name']
+        },
+        {
+          model: require('../models').SysModule,
+          as: 'modules',
+          attributes: ['id', 'id_code', 'name', 'slug'],
+          through: { attributes: [] }
+        }
+      ],
+      distinct: true
+    });
+
+    res.json({
+      success: true,
+      total: count,
+      page: parseInt(page),
+      pages: Math.ceil(count / limit),
+      data: rows
+    });
+  } catch (error) {
+    console.error('List all users error:', error);
+    res.status(500).json({
+      error: 'Internal server error',
+      message: 'Erro interno do servidor'
+    });
+  }
+});
+
 // Rota teste - antes da rota dinâmica
 router.get('/teste', authenticateToken, requireRole('admin', 'manager'), async (req, res) => {
   console.log('Rota /teste chamada');
@@ -94,7 +146,10 @@ router.get('/:id', authenticateToken, requireRole('admin', 'manager'), async (re
   try {
     const { id } = req.params;
 
-    const user = await User.findByPk(id, {
+    const where = isNaN(id) ? { id_code: id } : { id };
+
+    const user = await User.findOne({
+      where,
       include: [
         {
           model: Plan,
@@ -111,6 +166,12 @@ router.get('/:id', authenticateToken, requireRole('admin', 'manager'), async (re
           model: FootballTeam,
           as: 'team',
           attributes: ['id', 'name', 'short_name', 'abbreviation', 'shield']
+        },
+        {
+          model: require('../models').SysModule,
+          as: 'modules',
+          attributes: ['id', 'id_code', 'name', 'slug', 'active'],
+          through: { attributes: [] }
         }
       ],
       attributes: { exclude: ['password_hash'] }
@@ -130,9 +191,10 @@ router.get('/:id', authenticateToken, requireRole('admin', 'manager'), async (re
       });
       const storeIds = userStores.map(su => su.store_id);
 
+      // Note: user.id is the internal ID, which we have now regardless of how we found the user
       const userStoreAccess = await StoreUser.findOne({
         where: { 
-          user_id: id,
+          user_id: user.id,
           store_id: storeIds
         }
       });
@@ -215,6 +277,96 @@ router.post('/', authenticateToken, requireRole('admin'), [
     });
   } catch (error) {
     console.error('Create user error:', error);
+    res.status(500).json({
+      error: 'Internal server error',
+      message: 'Erro interno do servidor'
+    });
+  }
+});
+
+// Atualizar usuário (Admin)
+router.put('/:id', authenticateToken, requireRole('admin', 'master', 'masteradmin'), [
+  body('name').optional().isLength({ min: 2, max: 255 }).trim(),
+  body('email').optional().isEmail().normalizeEmail(),
+  body('role').optional().isIn(['admin', 'manager', 'waiter', 'customer']),
+  body('phone').optional().isLength({ min: 10, max: 20 }),
+  body('plan_id').optional().isInt(),
+  body('team_user').optional().isInt(),
+  body('module_ids').optional().isArray()
+], async (req, res) => {
+  try {
+    const { id } = req.params;
+    const errors = validationResult(req);
+    if (!errors.isEmpty()) {
+      return res.status(400).json({
+        error: 'Validation error',
+        message: 'Dados inválidos',
+        details: errors.array()
+      });
+    }
+
+    const where = isNaN(id) ? { id_code: id } : { id };
+    const user = await User.findOne({ where });
+
+    if (!user) {
+      return res.status(404).json({
+        error: 'User not found',
+        message: 'Usuário não encontrado'
+      });
+    }
+
+    const { name, email, role, phone, plan_id, team_user, module_ids } = req.body;
+
+    // Atualiza campos básicos
+    const updateData = {};
+    if (name) updateData.name = name;
+    if (email) updateData.email = email;
+    if (role) updateData.role = role;
+    if (phone) updateData.phone = phone;
+    if (plan_id !== undefined) updateData.plan_id = plan_id;
+    if (team_user !== undefined) updateData.team_user = team_user;
+
+    await user.update(updateData);
+
+    // Atualiza Módulos (se fornecido)
+    if (module_ids) {
+      // Se forem UUIDs (strings), busca os IDs internos
+      if (module_ids.length > 0 && (typeof module_ids[0] === 'string' && isNaN(module_ids[0]))) {
+        const modules = await require('../models').SysModule.findAll({
+          where: { id_code: module_ids },
+          attributes: ['id']
+        });
+        const internalIds = modules.map(m => m.id);
+        await user.setModules(internalIds);
+      } else {
+        // IDs numéricos diretos
+        await user.setModules(module_ids);
+      }
+    }
+
+    // Recarrega
+    await user.reload({
+      include: [
+        { model: Plan, as: 'plan' },
+        { model: FootballTeam, as: 'team' },
+        { 
+          model: require('../models').SysModule, 
+          as: 'modules',
+          attributes: ['id', 'id_code', 'name', 'slug', 'active'],
+          through: { attributes: [] }
+        }
+      ],
+      attributes: { exclude: ['password_hash'] }
+    });
+
+    res.json({
+      success: true,
+      message: 'Usuário atualizado com sucesso',
+      data: { user }
+    });
+
+  } catch (error) {
+    console.error('Update user error:', error);
     res.status(500).json({
       error: 'Internal server error',
       message: 'Erro interno do servidor'

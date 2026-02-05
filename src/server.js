@@ -41,6 +41,7 @@ const partyRoutes = require('./routes/parties');
 const finCategoryRoutes = require('./routes/finCategories');
 const finCostCenterRoutes = require('./routes/finCostCenters');
 const finTagRoutes = require('./routes/finTags');
+const sysModuleRoutes = require('./routes/sysModules');
 
 // Import middleware
 const errorHandler = require('./middlewares/errorHandler');
@@ -247,10 +248,11 @@ app.use('/api/v1/financial/parties', partyRoutes);
 app.use('/api/v1/financial/categories', finCategoryRoutes);
 app.use('/api/v1/financial/cost-centers', finCostCenterRoutes);
 app.use('/api/v1/financial/tags', finTagRoutes);
-app.use('/api/v1/financial/recurrences', finRecurrenceRoutes);
 app.use('/api/v1/financial', financialRoutes);
+app.use('/api/v1/financial', finRecurrenceRoutes);
+app.use('/api/v1/sys-modules', sysModuleRoutes);
 
-// Swagger (apenas dev)
+// Swagger UI(apenas dev)
 if (process.env.NODE_ENV === 'development') {
   app.use('/api-docs', swaggerUi.serve, swaggerUi.setup(specs));
 }

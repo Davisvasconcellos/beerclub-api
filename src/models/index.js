@@ -30,8 +30,13 @@ const FinCategory = require('./FinCategory');
 const FinCostCenter = require('./FinCostCenter');
 const FinTag = require('./FinTag');
 const FinRecurrence = require('./FinRecurrence');
+const SysModule = require('./SysModule');
 
 // Define associations
+
+// SysModule Associations
+SysModule.associate({ User });
+User.associate({ SysModule });
 
 // Plan associations
 Plan.hasMany(User, { foreignKey: 'plan_id', as: 'users' });
@@ -245,4 +250,5 @@ module.exports = {
   ,FinCostCenter
   ,FinTag
   ,FinRecurrence
+  ,SysModule
 };

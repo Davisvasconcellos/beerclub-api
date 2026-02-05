@@ -1,7 +1,7 @@
 const express = require('express');
 const { body, validationResult } = require('express-validator');
 const { Order, OrderItem, Product, User, Bar } = require('../models');
-const { requireRole } = require('../middlewares/auth');
+const { requireRole, authenticateToken, requireModule } = require('../middlewares/auth');
 
 const router = express.Router();
 
@@ -30,7 +30,7 @@ const router = express.Router();
  *       200:
  *         description: Lista de pedidos
  */
-router.get('/', async (req, res) => {
+router.get('/', authenticateToken, requireModule('pub'), async (req, res) => {
   try {
     const { page = 1, limit = 10, status } = req.query;
     const offset = (page - 1) * limit;
@@ -115,7 +115,7 @@ router.get('/', async (req, res) => {
  *       200:
  *         description: Dados do pedido
  */
-router.get('/:id', async (req, res) => {
+router.get('/:id', authenticateToken, requireModule('pub'), async (req, res) => {
   try {
     const { id } = req.params;
 
@@ -214,6 +214,8 @@ router.get('/:id', async (req, res) => {
  *         description: Pedido criado com sucesso
  */
 router.post('/', [
+  authenticateToken,
+  requireModule('pub'),
   body('items').isArray({ min: 1 }),
   body('items.*.productId').isInt(),
   body('items.*.quantity').isInt({ min: 1 }),
@@ -340,7 +342,7 @@ router.post('/', [
  *       200:
  *         description: Status atualizado com sucesso
  */
-router.put('/:id/status', requireRole('admin', 'gerente', 'garcom'), [
+router.put('/:id/status', requireRole('admin', 'gerente', 'garcom'), requireModule('pub'), [
   body('status').isIn(['pending', 'preparing', 'ready', 'delivered', 'cancelled'])
 ], async (req, res) => {
   try {
