@@ -31,12 +31,24 @@ const FinCostCenter = require('./FinCostCenter');
 const FinTag = require('./FinTag');
 const FinRecurrence = require('./FinRecurrence');
 const SysModule = require('./SysModule');
+const EventJamMusicSuggestion = require('./EventJamMusicSuggestion');
+const EventJamMusicSuggestionParticipant = require('./EventJamMusicSuggestionParticipant');
 
 // Define associations
 
 // SysModule Associations
 SysModule.associate({ User });
 User.associate({ SysModule });
+
+// EventJamMusicSuggestion Associations
+EventJamMusicSuggestion.belongsTo(User, { foreignKey: 'created_by_user_id', as: 'creator' });
+User.hasMany(EventJamMusicSuggestion, { foreignKey: 'created_by_user_id', as: 'createdJamSuggestions' });
+
+EventJamMusicSuggestion.hasMany(EventJamMusicSuggestionParticipant, { foreignKey: 'music_suggestion_id', as: 'participants' });
+EventJamMusicSuggestionParticipant.belongsTo(EventJamMusicSuggestion, { foreignKey: 'music_suggestion_id', as: 'suggestion' });
+
+EventJamMusicSuggestionParticipant.belongsTo(User, { foreignKey: 'user_id', as: 'user' });
+User.hasMany(EventJamMusicSuggestionParticipant, { foreignKey: 'user_id', as: 'jamSuggestionParticipations' });
 
 // Plan associations
 Plan.hasMany(User, { foreignKey: 'plan_id', as: 'users' });
@@ -251,4 +263,6 @@ module.exports = {
   ,FinTag
   ,FinRecurrence
   ,SysModule
+  ,EventJamMusicSuggestion
+  ,EventJamMusicSuggestionParticipant
 };
