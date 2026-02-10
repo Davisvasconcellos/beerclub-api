@@ -25,6 +25,14 @@ const EventJamMusicSuggestion = sequelize.define('EventJamMusicSuggestion', {
     type: DataTypes.STRING,
     allowNull: false
   },
+  cover_image: {
+    type: DataTypes.STRING,
+    allowNull: true
+  },
+  extra_data: {
+    type: DataTypes.JSON,
+    allowNull: true
+  },
   created_by_user_id: {
     type: DataTypes.INTEGER,
     allowNull: false

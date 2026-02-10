@@ -211,8 +211,8 @@ router.post('/:id/jams/:jamId/songs', authenticateToken, requireRole('admin', 'm
   if (!event) return res.status(404).json({ error: 'Not Found', message: 'Evento não encontrado' });
   const jam = await EventJam.findOne({ where: { id: jamId, event_id: event.id } });
   if (!jam) return res.status(404).json({ error: 'Not Found', message: 'Jam não encontrada' });
-  const { title, artist, key, tempo_bpm, notes, release_batch, status, order_index } = req.body;
-  const song = await EventJamSong.create({ jam_id: jam.id, title, artist: artist || null, key: key || null, tempo_bpm: tempo_bpm || null, notes: notes || null, release_batch: release_batch || null, status: status || 'planned', order_index: order_index || 0 });
+  const { title, artist, cover_image, extra_data, key, tempo_bpm, notes, release_batch, status, order_index } = req.body;
+  const song = await EventJamSong.create({ jam_id: jam.id, title, artist: artist || null, cover_image: cover_image || null, extra_data: extra_data || null, key: key || null, tempo_bpm: tempo_bpm || null, notes: notes || null, release_batch: release_batch || null, status: status || 'planned', order_index: order_index || 0 });
   emitEvent(id, jamId, 'song_created', { song_id: song.id });
   return res.status(201).json({ success: true, data: song });
 });
@@ -235,8 +235,8 @@ router.post('/:id/jams/songs', authenticateToken, requireRole('admin', 'master')
       jam = await EventJam.create({ event_id: event.id, name: defaultName, slug: defaultSlug, status: 'active', order_index: 0 });
     }
 
-    const { title, artist, key, tempo_bpm, notes, release_batch, status, order_index, instrument_slots } = req.body;
-    const song = await EventJamSong.create({ jam_id: jam.id, title, artist: artist || null, key: key || null, tempo_bpm: tempo_bpm || null, notes: notes || null, release_batch: release_batch || null, status: status || 'planned', order_index: order_index || 0 });
+    const { title, artist, cover_image, extra_data, key, tempo_bpm, notes, release_batch, status, order_index, instrument_slots } = req.body;
+    const song = await EventJamSong.create({ jam_id: jam.id, title, artist: artist || null, cover_image: cover_image || null, extra_data: extra_data || null, key: key || null, tempo_bpm: tempo_bpm || null, notes: notes || null, release_batch: release_batch || null, status: status || 'planned', order_index: order_index || 0 });
 
     if (Array.isArray(instrument_slots) && instrument_slots.length) {
       for (const s of instrument_slots) {
@@ -277,6 +277,35 @@ router.post('/:id/jams/:jamId/songs/:songId/instrument-slots', authenticateToken
     await tx.rollback();
     return res.status(400).json({ error: 'Validation error', message: e.message });
   }
+});
+
+router.put('/:id/jams/:jamId/songs/:songId', authenticateToken, requireRole('admin', 'master'), async (req, res) => {
+  const { id, jamId, songId } = req.params;
+  const event = await Event.findOne({ where: { id_code: id } });
+  if (!event) return res.status(404).json({ error: 'Not Found', message: 'Evento não encontrado' });
+  const jam = await EventJam.findOne({ where: { id: jamId, event_id: event.id } });
+  if (!jam) return res.status(404).json({ error: 'Not Found', message: 'Jam não encontrada' });
+  
+  const song = await EventJamSong.findOne({ where: { id: songId, jam_id: jam.id } });
+  if (!song) return res.status(404).json({ error: 'Not Found', message: 'Música não encontrada' });
+
+  const { title, artist, cover_image, extra_data, key, tempo_bpm, notes, release_batch, status, order_index } = req.body;
+
+  await song.update({
+    title: title !== undefined ? title : song.title,
+    artist: artist !== undefined ? artist : song.artist,
+    cover_image: cover_image !== undefined ? cover_image : song.cover_image,
+    extra_data: extra_data !== undefined ? extra_data : song.extra_data,
+    key: key !== undefined ? key : song.key,
+    tempo_bpm: tempo_bpm !== undefined ? tempo_bpm : song.tempo_bpm,
+    notes: notes !== undefined ? notes : song.notes,
+    release_batch: release_batch !== undefined ? release_batch : song.release_batch,
+    status: status !== undefined ? status : song.status,
+    order_index: order_index !== undefined ? order_index : song.order_index
+  });
+
+  emitEvent(id, jamId, 'song_updated', { song_id: song.id });
+  return res.json({ success: true, data: song });
 });
 
 router.post('/:id/jams/:jamId/songs/release', authenticateToken, requireRole('admin', 'master'), async (req, res) => {

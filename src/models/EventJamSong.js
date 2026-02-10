@@ -6,6 +6,8 @@ const EventJamSong = sequelize.define('EventJamSong', {
   jam_id: { type: DataTypes.INTEGER, allowNull: false },
   title: { type: DataTypes.STRING(255), allowNull: false },
   artist: { type: DataTypes.STRING(255), allowNull: true },
+  cover_image: { type: DataTypes.STRING, allowNull: true },
+  extra_data: { type: DataTypes.JSON, allowNull: true },
   key: { type: DataTypes.STRING(10), allowNull: true },
   tempo_bpm: { type: DataTypes.INTEGER, allowNull: true },
   notes: { type: DataTypes.TEXT, allowNull: true },

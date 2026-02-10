@@ -94,9 +94,34 @@ router.get('/', authenticateToken, requireModule('events'), async (req, res) => 
       return res.status(404).json({ error: 'Not Found', message: 'Evento não encontrado' });
     }
 
-    // Buscar sugestões onde:
-    // 1. O evento é o especificado
-    // 2. E (O usuário é o criador OU o usuário é um participante)
+    // Configurar cláusula where baseada no papel do usuário
+    let whereClause = {
+      event_id: event.id
+    };
+
+    // Se for Admin ou Master, permite ver sugestões SUBMITTED (para aprovação)
+    // ou filtrar por status via query param
+    if (['admin', 'master'].includes(req.user.role)) {
+      const { status } = req.query;
+      
+      if (status && status !== 'ALL') {
+        whereClause.status = status;
+      } else if (!status) {
+        // Por padrão, se não especificar status, admin vê as que precisam de atenção (SUBMITTED)
+        // Mas se quiser ver todas (incluindo DRAFT dos outros? talvez não DRAFT), 
+        // vamos definir que por padrão admin vê SUBMITTED se não passar nada.
+        // Se passar status=ALL, vê tudo.
+        whereClause.status = 'SUBMITTED';
+      }
+      // Nota: Admin não tem filtro de user_id, vê de todos
+    } else {
+      // Usuário comum: vê apenas as suas (criador ou participante)
+      whereClause[Op.or] = [
+        { created_by_user_id: userId },
+        { '$participants.user_id$': userId }
+      ];
+    }
+
     const suggestions = await EventJamMusicSuggestion.findAll({
       include: [
         {
@@ -114,13 +139,7 @@ router.get('/', authenticateToken, requireModule('events'), async (req, res) => 
           attributes: ['id', 'id_code', 'name', 'avatar_url']
         }
       ],
-      where: {
-        event_id: event.id,
-        [Op.or]: [
-          { created_by_user_id: userId },
-          { '$participants.user_id$': userId }
-        ]
-      },
+      where: whereClause,
       order: [['created_at', 'DESC']]
     });
 
@@ -177,6 +196,8 @@ router.post('/',
     body('song_name').notEmpty().withMessage('Nome da música é obrigatório'),
     body('artist_name').notEmpty().withMessage('Nome do artista é obrigatório'),
     body('my_instrument').notEmpty().withMessage('Seu instrumento é obrigatório'),
+    body('cover_image').optional().isString(),
+    body('extra_data').optional(),
     body('invites').optional().isArray(),
     body('invites.*.user_id').isUUID(),
     body('invites.*.instrument').notEmpty()
@@ -185,7 +206,7 @@ router.post('/',
     const errors = validationResult(req);
     if (!errors.isEmpty()) return res.status(400).json({ errors: errors.array() });
 
-    const { event_id, song_name, artist_name, my_instrument, invites = [] } = req.body;
+    const { event_id, song_name, artist_name, my_instrument, cover_image, extra_data, invites = [] } = req.body;
     const userId = req.user.userId;
 
     const event = await Event.findOne({ where: { id_code: event_id } });
@@ -199,6 +220,8 @@ router.post('/',
         event_id: event.id,
         song_name,
         artist_name,
+        cover_image,
+        extra_data,
         created_by_user_id: userId,
         status: 'DRAFT'
       }, { transaction });
@@ -264,6 +287,8 @@ router.put('/:id',
   [
     body('song_name').optional().notEmpty(),
     body('artist_name').optional().notEmpty(),
+    body('cover_image').optional().isString(),
+    body('extra_data').optional()
   ],
   async (req, res) => {
     try {
@@ -278,11 +303,13 @@ router.put('/:id',
 
       if (!suggestion) return res.status(404).json({ error: 'Not Found', message: 'Sugestão não encontrada' });
 
-      if (suggestion.created_by_user_id !== userId) {
-        return res.status(403).json({ error: 'Forbidden', message: 'Apenas o criador pode editar' });
+      // Permitir admin ou criador
+      if (suggestion.created_by_user_id !== userId && !['admin', 'master'].includes(req.user.role)) {
+        return res.status(403).json({ error: 'Forbidden', message: 'Apenas o criador ou admin pode editar' });
       }
 
-      if (suggestion.status !== 'DRAFT') {
+      // Se for admin, pode editar em qualquer status. Se for criador, só DRAFT.
+      if (!['admin', 'master'].includes(req.user.role) && suggestion.status !== 'DRAFT') {
         return res.status(400).json({ error: 'Bad Request', message: 'Apenas sugestões em rascunho podem ser editadas' });
       }
 
@@ -296,7 +323,42 @@ router.put('/:id',
 );
 
 /**
- * 2.2 Excluir Sugestão (DELETE)
+ * 2.2 Rejeitar Sugestão (REJECT)
+ * POST /api/v1/music-suggestions/:id/reject
+ */
+router.post('/:id/reject', authenticateToken, requireModule('events'), async (req, res) => {
+  try {
+    const { id } = req.params;
+    const userId = req.user.userId;
+
+    // Apenas admins podem rejeitar
+    if (!['admin', 'master'].includes(req.user.role)) {
+      return res.status(403).json({ error: 'Forbidden', message: 'Apenas administradores podem rejeitar sugestões' });
+    }
+
+    const suggestion = await EventJamMusicSuggestion.findOne({ 
+      where: { 
+        [Op.or]: [{ id_code: id }, { id: isNaN(id) ? 0 : id }]
+      } 
+    });
+
+    if (!suggestion) return res.status(404).json({ error: 'Not Found', message: 'Sugestão não encontrada' });
+
+    if (suggestion.status === 'REJECTED') {
+      return res.status(400).json({ error: 'Bad Request', message: 'Sugestão já está rejeitada' });
+    }
+
+    suggestion.status = 'REJECTED';
+    await suggestion.save();
+
+    return res.json({ success: true, message: 'Sugestão rejeitada com sucesso', data: suggestion });
+  } catch (error) {
+    return res.status(500).json({ error: 'Internal Server Error', message: error.message });
+  }
+});
+
+/**
+ * 2.3 Excluir Sugestão (DELETE)
  * DELETE /api/v1/music-suggestions/:id
  */
 router.delete('/:id', authenticateToken, requireModule('events'), async (req, res) => {
@@ -312,8 +374,8 @@ router.delete('/:id', authenticateToken, requireModule('events'), async (req, re
 
     if (!suggestion) return res.status(404).json({ error: 'Not Found', message: 'Sugestão não encontrada' });
 
-    if (suggestion.created_by_user_id !== userId) {
-      return res.status(403).json({ error: 'Forbidden', message: 'Apenas o criador pode excluir' });
+    if (suggestion.created_by_user_id !== userId && !['admin', 'master'].includes(req.user.role)) {
+      return res.status(403).json({ error: 'Forbidden', message: 'Apenas o criador ou admin pode excluir' });
     }
 
     await suggestion.destroy();
@@ -563,6 +625,8 @@ router.post('/:id/approve',
           jam_id: targetJam.id,
           title: suggestion.song_name,
           artist: suggestion.artist_name,
+          cover_image: suggestion.cover_image,
+          extra_data: suggestion.extra_data,
           status: 'planned', // Vai para a coluna 'planned'
           ready: false,
           order_index: 999 // Final da fila
