@@ -197,7 +197,13 @@ router.get('/public', async (req, res) => {
 
     return res.json({
       success: true,
-      data: { events: rows },
+      data: {
+        events: rows.map(r => {
+          const j = r.toJSON();
+          j.id = j.id_code; // Sanitiza ID
+          return j;
+        })
+      },
       meta: {
         total,
         page,
@@ -313,7 +319,7 @@ router.get('/:id/guest/me', authenticateToken, async (req, res) => {
     return res.json({
       success: true,
       data: {
-        guest_id: guest.id,
+        guest_id: guest.id_code,
         checked_in: !!guest.check_in_at,
         checkin_at: guest.check_in_at,
         selfie_url: selfieUrl
@@ -422,7 +428,7 @@ router.post('/:id/checkin', authenticateToken, [
     return res.json({
       success: true,
       data: {
-        guest_id: guest.id,
+        guest_id: guest.id_code,
         checked_in: !!guest.check_in_at,
         checkin_at: guest.check_in_at
       }

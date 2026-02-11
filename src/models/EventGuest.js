@@ -1,11 +1,18 @@
 const { DataTypes } = require('sequelize');
 const { sequelize } = require('../config/database');
+const { v4: uuidv4 } = require('uuid');
 
 const EventGuest = sequelize.define('EventGuest', {
   id: {
     type: DataTypes.INTEGER,
     primaryKey: true,
     autoIncrement: true
+  },
+  id_code: {
+    type: DataTypes.STRING(36),
+    allowNull: false,
+    unique: true,
+    defaultValue: uuidv4
   },
   event_id: {
     type: DataTypes.INTEGER,

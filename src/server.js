@@ -43,6 +43,7 @@ const finCostCenterRoutes = require('./routes/finCostCenters');
 const finTagRoutes = require('./routes/finTags');
 const sysModuleRoutes = require('./routes/sysModules');
 const eventJamMusicSuggestionRoutes = require('./routes/eventJamMusicSuggestions');
+const musicCatalogRoutes = require('./routes/musicCatalog');
 
 // Import middleware
 const errorHandler = require('./middlewares/errorHandler');
@@ -253,6 +254,7 @@ app.use('/api/v1/financial', financialRoutes);
 app.use('/api/v1/financial', finRecurrenceRoutes);
 app.use('/api/v1/sys-modules', sysModuleRoutes);
 app.use('/api/v1/music-suggestions', eventJamMusicSuggestionRoutes);
+app.use('/api/v1/music-catalog', musicCatalogRoutes);
 
 // Swagger UI(apenas dev)
 if (process.env.NODE_ENV === 'development') {

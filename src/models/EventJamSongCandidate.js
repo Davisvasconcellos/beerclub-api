@@ -1,8 +1,10 @@
 const { DataTypes } = require('sequelize');
 const { sequelize } = require('../config/database');
+const { v4: uuidv4 } = require('uuid');
 
 const EventJamSongCandidate = sequelize.define('EventJamSongCandidate', {
   id: { type: DataTypes.INTEGER, primaryKey: true, autoIncrement: true },
+  id_code: { type: DataTypes.STRING(36), allowNull: false, unique: true, defaultValue: uuidv4 },
   jam_song_id: { type: DataTypes.INTEGER, allowNull: false },
   instrument: { type: DataTypes.ENUM('guitar','bass','drums','keys','vocals','horns','percussion','strings','other'), allowNull: false },
   event_guest_id: { type: DataTypes.INTEGER, allowNull: false },

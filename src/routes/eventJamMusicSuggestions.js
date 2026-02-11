@@ -2,7 +2,7 @@ const express = require('express');
 const { body, validationResult } = require('express-validator');
 const { authenticateToken, requireModule } = require('../middlewares/auth');
 const { Op } = require('sequelize');
-const { EventJamMusicSuggestion, EventJamMusicSuggestionParticipant, User, EventJam, EventJamSong, EventJamSongInstrumentSlot, EventJamSongCandidate, EventGuest, Event } = require('../models');
+const { EventJamMusicSuggestion, EventJamMusicSuggestionParticipant, User, EventJam, EventJamSong, EventJamSongInstrumentSlot, EventJamSongCandidate, EventGuest, Event, EventJamMusicCatalog } = require('../models');
 
 const router = express.Router();
 
@@ -206,11 +206,21 @@ router.post('/',
     const errors = validationResult(req);
     if (!errors.isEmpty()) return res.status(400).json({ errors: errors.array() });
 
-    const { event_id, song_name, artist_name, my_instrument, cover_image, extra_data, invites = [] } = req.body;
+    const { event_id, song_name, artist_name, my_instrument, cover_image, extra_data, invites = [], catalog_id } = req.body;
     const userId = req.user.userId;
 
     const event = await Event.findOne({ where: { id_code: event_id } });
     if (!event) return res.status(404).json({ error: 'Not Found', message: 'Evento não encontrado' });
+
+    // Validar catalog_id se fornecido
+    let catalogEntry = null;
+    if (catalog_id) {
+        catalogEntry = await EventJamMusicCatalog.findByPk(catalog_id);
+        if (!catalogEntry) {
+            // Se não encontrar, segue sem link (ou poderia retornar erro, mas melhor ser resiliente)
+            console.warn(`Catalog ID ${catalog_id} not found, ignoring link.`);
+        }
+    }
 
     const transaction = await EventJamMusicSuggestion.sequelize.transaction();
 
@@ -222,9 +232,15 @@ router.post('/',
         artist_name,
         cover_image,
         extra_data,
+        catalog_id: catalogEntry ? catalogEntry.id : null,
         created_by_user_id: userId,
         status: 'DRAFT'
       }, { transaction });
+
+      // Se veio do catálogo, incrementa o contador
+      if (catalogEntry) {
+        await catalogEntry.increment('usage_count', { transaction });
+      }
 
       // Adicionar o criador como participante (ACCEPTED)
       await EventJamMusicSuggestionParticipant.create({
@@ -569,7 +585,7 @@ router.post('/:id/approve',
   authenticateToken,
   requireModule('events'),
   [
-    body('jam_id').optional().isInt().withMessage('Jam ID deve ser inteiro'),
+    body('jam_id').optional().isString().withMessage('Jam ID deve ser string (UUID)'),
     body('target_jam_slug').optional().isString(), // Alternativa se quiser buscar por slug
   ],
   async (req, res) => {
@@ -578,11 +594,8 @@ router.post('/:id/approve',
       const { jam_id, target_jam_slug } = req.body;
       const adminId = req.user.userId;
 
-      // Verificar permissão de admin/master (embora requireModule('events') já ajude, 
-      // idealmente só admins aprovam. Vamos checar role ou se o user é dono do evento)
+      // Verificar permissão de admin/master
       if (!['admin', 'master'].includes(req.user.role)) {
-        // TODO: Verificar se é dono do evento se for role 'manager' ou similar
-        // Por simplificação, vamos restringir a admin/master por enquanto
         return res.status(403).json({ error: 'Forbidden', message: 'Apenas administradores podem aprovar sugestões' });
       }
 
@@ -595,31 +608,38 @@ router.post('/:id/approve',
 
       if (!suggestion) return res.status(404).json({ error: 'Not Found', message: 'Sugestão não encontrada' });
 
-      if (suggestion.status !== 'SUBMITTED') {
+      // Se for admin/master, permite aprovar mesmo que não esteja em SUBMITTED (ex: DRAFT)
+      // Isso facilita testes e permite que o admin crie a sugestão e aprove direto
+      if (suggestion.status !== 'SUBMITTED' && !['admin', 'master'].includes(req.user.role)) {
         return res.status(400).json({ error: 'Bad Request', message: 'Apenas sugestões submetidas podem ser aprovadas' });
       }
 
-      // Determinar a Jam de destino
+      // Buscar a Jam (tenta por id_code UUID ou ID numérico)
       let targetJam = null;
       if (jam_id) {
-        targetJam = await EventJam.findByPk(jam_id);
+        targetJam = await EventJam.findOne({ 
+          where: { 
+            [Op.or]: [
+              { id_code: jam_id },
+              // Se jam_id for numérico, também tenta buscar por ID
+              ...(!isNaN(jam_id) ? [{ id: jam_id }] : [])
+            ]
+          }
+        });
       } else if (target_jam_slug) {
         targetJam = await EventJam.findOne({ where: { slug: target_jam_slug } });
-      } else {
-        // Tentar encontrar uma jam padrão do evento da sugestão, se tiver event_id
-        if (suggestion.event_id) {
-          targetJam = await EventJam.findOne({ where: { event_id: suggestion.event_id }, order: [['id', 'ASC']] });
-        }
       }
 
       if (!targetJam) {
-        return res.status(400).json({ error: 'Bad Request', message: 'Jam de destino não encontrada ou não especificada' });
+        return res.status(404).json({ error: 'Not Found', message: 'Jam não encontrada' });
       }
 
       // Iniciar transação para criar tudo
       const transaction = await EventJamMusicSuggestion.sequelize.transaction();
 
       try {
+        const { instrument_slots, pre_approved_candidates } = req.body;
+
         // 1. Criar a música (EventJamSong)
         const newSong = await EventJamSong.create({
           jam_id: targetJam.id,
@@ -627,61 +647,110 @@ router.post('/:id/approve',
           artist: suggestion.artist_name,
           cover_image: suggestion.cover_image,
           extra_data: suggestion.extra_data,
+          catalog_id: suggestion.catalog_id, // Herda o ID do catálogo
           status: 'planned', // Vai para a coluna 'planned'
           ready: false,
           order_index: 999 // Final da fila
         }, { transaction });
 
-        // 2. Processar Instrument Slots e Candidatos
-        // Agrupar participantes por instrumento para saber quantos slots criar
-        const participantsByInstrument = {};
-        for (const p of suggestion.participants) {
-          if (!participantsByInstrument[p.instrument]) {
-            participantsByInstrument[p.instrument] = [];
+        // Increment usage count for catalog item
+        if (suggestion.catalog_id) {
+          try {
+            await EventJamMusicCatalog.increment('usage_count', { where: { id: suggestion.catalog_id }, transaction });
+          } catch (e) {
+            console.error('Erro ao incrementar usage_count:', e);
           }
-          participantsByInstrument[p.instrument].push(p);
         }
 
-        for (const [instrument, participants] of Object.entries(participantsByInstrument)) {
-          // Criar Slot para esse instrumento
-          // Quantidade de slots = quantidade de participantes aceitos + margem? 
-          // Por padrão, vamos criar slots suficientes para os participantes aprovados.
-          // Se houver participantes REJECTED ou PENDING na sugestão (o que não deveria ocorrer se validado no submit), ignoramos.
-          const approvedParticipants = participants.filter(p => p.status === 'ACCEPTED');
-          
-          if (approvedParticipants.length > 0) {
-            await EventJamSongInstrumentSlot.create({
-              jam_song_id: newSong.id,
-              instrument: instrument,
-              slots: approvedParticipants.length,
-              required: true,
-              fallback_allowed: true
+        // 2. Processar Instrument Slots e Candidatos
+        // Se o frontend enviou estrutura personalizada (instrument_slots), usa ela (Override)
+        // Caso contrário, usa a lógica padrão baseada nos participantes da sugestão
+
+        const shouldUseCustomStructure = Array.isArray(instrument_slots) && instrument_slots.length > 0;
+
+        if (shouldUseCustomStructure) {
+          // Lógica de Override (Custom Structure)
+          for (const s of instrument_slots) {
+            await EventJamSongInstrumentSlot.create({ 
+              jam_song_id: newSong.id, 
+              instrument: s.instrument, 
+              slots: s.slots || 1, 
+              required: s.required !== undefined ? !!s.required : true, 
+              fallback_allowed: s.fallback_allowed !== undefined ? !!s.fallback_allowed : true 
             }, { transaction });
+          }
 
-            // Criar Candidatos (EventJamSongCandidate)
-            for (const p of approvedParticipants) {
-              // Precisamos achar o EventGuest deste usuário neste evento
-              // Como a suggestion pode não ter event_id preenchido (se não foi passado), 
-              // usamos o event_id da JAM de destino.
-              const eventId = targetJam.event_id;
+          if (Array.isArray(pre_approved_candidates) && pre_approved_candidates.length) {
+            for (const candidate of pre_approved_candidates) {
+              if (!candidate.user_id || !candidate.instrument) continue;
               
-              const guest = await EventGuest.findOne({
-                where: { event_id: eventId, user_id: p.user_id }
-              });
+              const userIdClean = String(candidate.user_id).trim();
+              // Frontend sends id_code (UUID) as user_id. Find the internal numeric ID first.
+              const user = await User.findOne({ where: { id_code: userIdClean }, transaction });
+              if (!user) continue;
 
+              const eventId = targetJam.event_id;
+              const guest = await EventGuest.findOne({ where: { event_id: eventId, user_id: user.id }, transaction });
+              
               if (guest) {
-                await EventJamSongCandidate.create({
-                  jam_song_id: newSong.id,
-                  instrument: instrument,
-                  event_guest_id: guest.id,
-                  status: 'approved',
-                  applied_at: new Date(),
-                  approved_at: new Date(),
-                  approved_by_user_id: adminId
-                }, { transaction });
-              } else {
-                console.warn(`EventGuest não encontrado para usuário ${p.user_id} no evento ${eventId}`);
-                // Não falhar a transação, mas o usuário não entra na banda
+                 await EventJamSongCandidate.create({
+                   jam_song_id: newSong.id,
+                   instrument: candidate.instrument,
+                   event_guest_id: guest.id,
+                   status: 'approved',
+                   approved_at: new Date(),
+                   approved_by_user_id: adminId
+                 }, { transaction });
+              }
+            }
+          }
+
+        } else {
+          // Lógica Padrão (Baseada nos participantes da Sugestão)
+          // Agrupar participantes por instrumento para saber quantos slots criar
+          const participantsByInstrument = {};
+          for (const p of suggestion.participants) {
+            if (!participantsByInstrument[p.instrument]) {
+              participantsByInstrument[p.instrument] = [];
+            }
+            participantsByInstrument[p.instrument].push(p);
+          }
+
+          for (const [instrument, participants] of Object.entries(participantsByInstrument)) {
+            // Criar Slot para esse instrumento
+            // Quantidade de slots = quantidade de participantes aceitos
+            const approvedParticipants = participants.filter(p => p.status === 'ACCEPTED');
+            
+            if (approvedParticipants.length > 0) {
+              await EventJamSongInstrumentSlot.create({
+                jam_song_id: newSong.id,
+                instrument: instrument,
+                slots: approvedParticipants.length,
+                required: true,
+                fallback_allowed: true
+              }, { transaction });
+
+              // Criar Candidatos (EventJamSongCandidate)
+              for (const p of approvedParticipants) {
+                const eventId = targetJam.event_id;
+                const guest = await EventGuest.findOne({
+                  where: { event_id: eventId, user_id: p.user_id },
+                  transaction // IMPORTANTE: Passar transaction
+                });
+
+                if (guest) {
+                  await EventJamSongCandidate.create({
+                    jam_song_id: newSong.id,
+                    instrument: instrument,
+                    event_guest_id: guest.id,
+                    status: 'approved',
+                    applied_at: new Date(),
+                    approved_at: new Date(),
+                    approved_by_user_id: adminId
+                  }, { transaction });
+                } else {
+                  console.warn(`EventGuest não encontrado para usuário ${p.user_id} no evento ${eventId}`);
+                }
               }
             }
           }

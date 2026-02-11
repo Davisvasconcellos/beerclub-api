@@ -8,6 +8,22 @@ const jwt = require('jsonwebtoken');
 
 const router = express.Router();
 
+// Helper para sanitizar evento (ocultar ID numérico e usar UUID)
+const sanitizeEvent = (event) => {
+  if (!event) return null;
+  const json = event.toJSON ? event.toJSON() : event;
+  // Se tiver id_code, usa como id
+  if (json.id_code) {
+    json.id = json.id_code;
+    // delete json.id_code; // Opcional: manter id_code redundante ou remover? 
+    // Por compatibilidade com outros módulos que podem esperar id_code explícito, vamos manter ambos ou apenas id?
+    // O padrão "moderno" da API parece ser: id = uuid.
+  }
+  // Remove ID numérico se ainda existir (caso id_code não tenha sobrescrito ou seja diferente)
+  // Mas como id_code é string e id é int, a atribuição acima sobrescreve.
+  return json;
+};
+
 // Helper para detalhar erros de duplicidade (unique constraint)
 function formatDuplicateError(error) {
   const sqlMessage = error?.parent?.sqlMessage || '';
@@ -325,7 +341,7 @@ router.post('/', authenticateToken, requireRole('admin', 'master'), requireModul
         include: [{ model: EventQuestion, as: 'questions', order: [['order_index', 'ASC']] }]
       });
 
-      return res.status(201).json({ success: true, data: { event: created } });
+      return res.status(201).json({ success: true, data: { event: sanitizeEvent(created) } });
     } catch (err) {
       await t.rollback();
       throw err;
@@ -464,7 +480,7 @@ router.get('/', authenticateToken, requireRole('admin', 'master'), requireModule
 
     return res.json({
       success: true,
-      data: { events: rows },
+      data: { events: rows.map(r => sanitizeEvent(r)) },
       meta: {
         total,
         page,
@@ -525,7 +541,7 @@ router.get('/:id', authenticateToken, requireRole('admin', 'master'), requireMod
 
     const total_responses = await EventResponse.count({ where: { event_id: event.id } });
 
-    return res.json({ success: true, data: { event, total_responses } });
+    return res.json({ success: true, data: { event: sanitizeEvent(event), total_responses } });
   } catch (error) {
     console.error('Get event error:', error);
     return res.status(500).json({ error: 'Internal server error', message: 'Erro interno do servidor' });
@@ -638,7 +654,7 @@ router.patch('/:id', authenticateToken, requireRole('admin', 'master'), requireM
 
     await event.update(updateData);
 
-    return res.json({ success: true, message: 'Evento atualizado com sucesso', data: { event } });
+    return res.json({ success: true, message: 'Evento atualizado com sucesso', data: { event: sanitizeEvent(event) } });
   } catch (error) {
     console.error('Patch event error:', error);
     return res.status(500).json({ error: 'Internal server error', message: 'Erro interno do servidor' });
@@ -1030,7 +1046,7 @@ router.get('/:id/stats', authenticateToken, requireRole('admin', 'master'), asyn
     return res.json({
       success: true,
       data: {
-        event_id: event.id,
+        event_id: event.id_code,
         total_questions: questions.length,
         event_total_answers: eventTotalAnswers,
         questions_stats: questionsStats
@@ -1507,11 +1523,11 @@ router.post('/:id/checkin/confirm', authenticateToken, requireRole('admin', 'mas
       return res.status(403).json({ error: 'Access denied', message: 'Acesso negado' });
     }
 
-    const guest = await EventGuest.findOne({ where: { id: guest_id, event_id: event.id } });
+    const guest = await EventGuest.findOne({ where: { id_code: guest_id, event_id: event.id } });
     if (!guest) return res.status(404).json({ error: 'Not Found', message: 'Convidado não encontrado' });
 
     await guest.update({ check_in_at: new Date(), check_in_method: 'staff_manual', authorized_by_user_id: req.user.userId });
-    return res.json({ success: true, data: { guest } });
+    return res.json({ success: true, data: { guest: { ...guest.toJSON(), id: guest.id_code, id_code: undefined } } });
   } catch (error) {
     console.error('Confirm check-in error:', error);
     return res.status(500).json({ error: 'Internal server error', message: 'Erro interno do servidor' });
@@ -1575,7 +1591,7 @@ router.post('/:id/checkin/manual', authenticateToken, requireRole('admin', 'mast
     };
 
     const created = await EventGuest.create(payload);
-    return res.status(201).json({ success: true, data: { guest: created } });
+    return res.status(201).json({ success: true, data: { guest: { ...created.toJSON(), id: created.id_code, id_code: undefined } } });
   } catch (error) {
     console.error('Manual check-in error:', error);
     if (error.name === 'SequelizeUniqueConstraintError') {
@@ -1651,7 +1667,7 @@ router.patch('/:id/guests/:guestId', authenticateToken, requireRole('admin', 'ma
       return res.status(400).json({ error: 'Validation error', details: errors.array() });
     }
 
-    const guest = await EventGuest.findOne({ where: { id: guestId, event_id: event.id } });
+    const guest = await EventGuest.findOne({ where: { id_code: guestId, event_id: event.id } });
     if (!guest) return res.status(404).json({ error: 'Not Found', message: 'Convidado não encontrado' });
 
     const update = {};
@@ -1691,7 +1707,7 @@ router.patch('/:id/guests/:guestId', authenticateToken, requireRole('admin', 'ma
     }
 
     await guest.update(update);
-    return res.json({ success: true, data: { guest } });
+    return res.json({ success: true, data: { guest: { ...guest.toJSON(), id: guest.id_code, id_code: undefined } } });
   } catch (error) {
     console.error('Update event guest error:', error);
     if (error.name === 'SequelizeUniqueConstraintError') {
@@ -1810,7 +1826,7 @@ router.get('/:id/guests', authenticateToken, requireRole('admin', 'master'), req
         ? 'pre_list'
         : (g.check_in_method === 'google' ? 'open_login' : 'front_desk');
       return {
-        id: g.id,
+        id: g.id_code,
         display_name: g.user?.name || g.guest_name,
         avatar_url: g.user?.avatar_url || null,
         email: g.user?.email || g.guest_email || null,
@@ -1962,7 +1978,11 @@ router.post('/:id/guests', authenticateToken, requireRole('admin', 'master'), [
     }));
 
     const created = await EventGuest.bulkCreate(toCreate, { validate: true, returning: true });
-    return res.status(201).json({ success: true, data: { guests: created } });
+    const formatted = created.map(g => {
+      const json = g.toJSON();
+      return { ...json, id: g.id_code, id_code: undefined };
+    });
+    return res.status(201).json({ success: true, data: { guests: formatted } });
   } catch (error) {
     console.error('Create event guests error:', error);
     if (error.name === 'SequelizeUniqueConstraintError') {

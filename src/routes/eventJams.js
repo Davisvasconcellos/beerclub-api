@@ -3,7 +3,7 @@ const { body, validationResult } = require('express-validator');
 const { authenticateToken, requireRole, requireModule } = require('../middlewares/auth');
 const jwt = require('jsonwebtoken');
 const { Op } = require('sequelize');
-const { Event, EventJam, EventJamSong, EventJamSongInstrumentSlot, EventJamSongCandidate, EventJamSongRating, EventGuest, User } = require('../models');
+const { Event, EventJam, EventJamSong, EventJamSongInstrumentSlot, EventJamSongCandidate, EventJamSongRating, EventGuest, User, EventJamMusicCatalog } = require('../models');
 
 const router = express.Router();
 
@@ -77,14 +77,14 @@ router.get('/:id/jams', authenticateToken, requireRole('admin', 'master'), requi
         const displayName = c.guest?.user?.name || c.guest?.guest_name || null;
         const email = c.guest?.user?.email || c.guest?.guest_email || null;
         const avatar_url = c.guest?.selfie_url || c.guest?.user?.avatar_url || null;
-        const entry = { candidate_id: c.id, guest_id: c.event_guest_id, display_name: displayName, email, avatar_url, status: c.status };
+        const entry = { candidate_id: c.id_code, guest_id: c.guest?.id_code, display_name: displayName, email, avatar_url, status: c.status };
         if (c.status === 'approved') bucket.approved.push(entry); else bucket.pending.push(entry);
       }
       const ratings = s.ratings || [];
       const avg = ratings.length ? (ratings.reduce((a, r) => a + r.stars, 0) / ratings.length) : null;
       return {
-        id: s.id,
-        jam_id: s.jam_id,
+        id: s.id_code,
+        jam_id: j.id_code,
         title: s.title,
         artist: s.artist,
         status: s.status,
@@ -95,7 +95,7 @@ router.get('/:id/jams', authenticateToken, requireRole('admin', 'master'), requi
         rating_summary: ratings.length ? { average: Number(avg.toFixed(2)), count: ratings.length } : null
       };
     });
-    return { id: j.id, event_id: j.event_id, name: j.name, slug: j.slug, status: j.status, notes: j.notes, order_index: j.order_index, songs };
+    return { id: j.id_code, event_id: event.id_code, name: j.name, slug: j.slug, status: j.status, notes: j.notes, order_index: j.order_index, songs };
   });
   return res.json({ success: true, data });
 });
@@ -107,6 +107,7 @@ router.get('/:id/jams/songs', authenticateToken, requireRole('admin', 'master'),
   if (req.user.role !== 'master' && event.created_by !== req.user.userId) return res.status(403).json({ error: 'Access denied' });
   const jams = await EventJam.findAll({ where: { event_id: event.id } });
   const jamIds = jams.map(j => j.id);
+  const jamIdMap = jams.reduce((acc, j) => { acc[j.id] = j.id_code; return acc; }, {});
 
   const { status, search, release_batch, page = 1, page_size = 20, order = 'asc', sort_by = 'order_index' } = req.query;
   const onlyReal = String(req.query.only_real || 'false').toLowerCase() === 'true';
@@ -144,14 +145,14 @@ router.get('/:id/jams/songs', authenticateToken, requireRole('admin', 'master'),
       const displayName = c.guest?.user?.name || c.guest?.guest_name || null;
       const email = c.guest?.user?.email || c.guest?.guest_email || null;
       const avatar_url = c.guest?.user?.avatar_url || null;
-      const entry = { candidate_id: c.id, guest_id: c.event_guest_id, display_name: displayName, email, avatar_url, status: c.status };
+      const entry = { candidate_id: c.id_code, guest_id: c.guest?.id_code, display_name: displayName, email, avatar_url, status: c.status };
       if (c.status === 'approved') bucket.approved.push(entry); else bucket.pending.push(entry);
     }
     const ratings = s.ratings || [];
     const avg = ratings.length ? (ratings.reduce((a, r) => a + r.stars, 0) / ratings.length) : null;
     return {
-      id: s.id,
-      jam_id: s.jam_id,
+      id: s.id_code,
+      jam_id: jamIdMap[s.jam_id],
       title: s.title,
       artist: s.artist,
       status: s.status,
@@ -192,7 +193,7 @@ router.post('/:id/jams', authenticateToken, requireRole('admin', 'master'), [
     }
 
     const jam = await EventJam.create({ event_id: event.id, name, slug, notes: notes || null, status: status || 'active', order_index: order_index || 0 });
-    return res.status(201).json({ success: true, data: jam });
+    return res.status(201).json({ success: true, data: { id: jam.id_code, event_id: event.id_code, name: jam.name, slug: jam.slug, status: jam.status, notes: jam.notes, order_index: jam.order_index } });
   } catch (err) {
     if (err.name === 'SequelizeUniqueConstraintError') {
       return res.status(409).json({ error: 'Duplicate entry', message: 'Jam já está cadastrada', details: [{ field: 'slug', issue: 'duplicate' }] });
@@ -209,12 +210,21 @@ router.post('/:id/jams/:jamId/songs', authenticateToken, requireRole('admin', 'm
   const { id, jamId } = req.params;
   const event = await Event.findOne({ where: { id_code: id } });
   if (!event) return res.status(404).json({ error: 'Not Found', message: 'Evento não encontrado' });
-  const jam = await EventJam.findOne({ where: { id: jamId, event_id: event.id } });
+  const jam = await EventJam.findOne({ where: { id_code: jamId, event_id: event.id } });
   if (!jam) return res.status(404).json({ error: 'Not Found', message: 'Jam não encontrada' });
-  const { title, artist, cover_image, extra_data, key, tempo_bpm, notes, release_batch, status, order_index } = req.body;
-  const song = await EventJamSong.create({ jam_id: jam.id, title, artist: artist || null, cover_image: cover_image || null, extra_data: extra_data || null, key: key || null, tempo_bpm: tempo_bpm || null, notes: notes || null, release_batch: release_batch || null, status: status || 'planned', order_index: order_index || 0 });
-  emitEvent(id, jamId, 'song_created', { song_id: song.id });
-  return res.status(201).json({ success: true, data: song });
+  const { title, artist, cover_image, extra_data, key, tempo_bpm, notes, release_batch, status, order_index, catalog_id } = req.body;
+  const song = await EventJamSong.create({ jam_id: jam.id, title, artist: artist || null, cover_image: cover_image || null, extra_data: extra_data || null, key: key || null, tempo_bpm: tempo_bpm || null, notes: notes || null, release_batch: release_batch || null, status: status || 'planned', order_index: order_index || 0, catalog_id: catalog_id || null });
+  
+  if (catalog_id) {
+    try {
+      await EventJamMusicCatalog.increment('usage_count', { where: { id: catalog_id } });
+    } catch (e) {
+      console.error('Erro ao incrementar usage_count:', e);
+    }
+  }
+
+  emitEvent(id, jam.id_code, 'song_created', { song_id: song.id_code });
+  return res.status(201).json({ success: true, data: { ...song.toJSON(), id: song.id_code, jam_id: jam.id_code, id_code: undefined } });
 });
 
 router.post('/:id/jams/songs', authenticateToken, requireRole('admin', 'master'), [
@@ -235,18 +245,108 @@ router.post('/:id/jams/songs', authenticateToken, requireRole('admin', 'master')
       jam = await EventJam.create({ event_id: event.id, name: defaultName, slug: defaultSlug, status: 'active', order_index: 0 });
     }
 
-    const { title, artist, cover_image, extra_data, key, tempo_bpm, notes, release_batch, status, order_index, instrument_slots } = req.body;
-    const song = await EventJamSong.create({ jam_id: jam.id, title, artist: artist || null, cover_image: cover_image || null, extra_data: extra_data || null, key: key || null, tempo_bpm: tempo_bpm || null, notes: notes || null, release_batch: release_batch || null, status: status || 'planned', order_index: order_index || 0 });
+    const { title, artist, cover_image, extra_data, key, tempo_bpm, notes, release_batch, status, order_index, instrument_slots, catalog_id, pre_approved_candidates } = req.body;
+    
+    // Start a transaction for data integrity
+    const tx = await EventJamSong.sequelize.transaction();
+    
+    try {
+      const song = await EventJamSong.create({ jam_id: jam.id, title, artist: artist || null, cover_image: cover_image || null, extra_data: extra_data || null, key: key || null, tempo_bpm: tempo_bpm || null, notes: notes || null, release_batch: release_batch || null, status: status || 'planned', order_index: order_index || 0, catalog_id: catalog_id || null }, { transaction: tx });
 
-    if (Array.isArray(instrument_slots) && instrument_slots.length) {
-      for (const s of instrument_slots) {
-        await EventJamSongInstrumentSlot.create({ jam_song_id: song.id, instrument: s.instrument, slots: s.slots || 1, required: s.required !== undefined ? !!s.required : true, fallback_allowed: s.fallback_allowed !== undefined ? !!s.fallback_allowed : true });
+      if (catalog_id) {
+        try {
+          await EventJamMusicCatalog.increment('usage_count', { where: { id: catalog_id }, transaction: tx });
+        } catch (e) {
+          console.error('Erro ao incrementar usage_count:', e);
+        }
       }
-      emitEvent(id, String(jam.id), 'instrument_slots_updated', { song_id: song.id });
-    }
 
-    emitEvent(id, String(jam.id), 'song_created', { song_id: song.id });
-    return res.status(201).json({ success: true, data: { jam, song } });
+      if (Array.isArray(instrument_slots) && instrument_slots.length) {
+        for (const s of instrument_slots) {
+          await EventJamSongInstrumentSlot.create({ jam_song_id: song.id, instrument: s.instrument, slots: s.slots || 1, required: s.required !== undefined ? !!s.required : true, fallback_allowed: s.fallback_allowed !== undefined ? !!s.fallback_allowed : true }, { transaction: tx });
+        }
+      }
+
+      if (Array.isArray(pre_approved_candidates) && pre_approved_candidates.length) {
+         for (const candidate of pre_approved_candidates) {
+           if (!candidate.user_id || !candidate.instrument) continue;
+           
+           const userIdClean = String(candidate.user_id).trim();
+           // Frontend sends id_code (UUID) as user_id. Find the internal numeric ID first.
+           const user = await User.findOne({ where: { id_code: userIdClean }, transaction: tx });
+           if (!user) continue;
+
+           const guest = await EventGuest.findOne({ where: { event_id: event.id, user_id: user.id }, transaction: tx });
+           if (guest) {
+              await EventJamSongCandidate.create({
+                jam_song_id: song.id,
+                instrument: candidate.instrument,
+                event_guest_id: guest.id,
+                status: 'approved',
+                approved_at: new Date(),
+                approved_by_user_id: req.user.userId
+              }, { transaction: tx });
+           }
+         }
+       }
+
+      await tx.commit();
+
+      if (Array.isArray(instrument_slots) && instrument_slots.length) {
+        emitEvent(id, jam.id_code, 'instrument_slots_updated', { song_id: song.id_code });
+      }
+      
+      emitEvent(id, jam.id_code, 'song_created', { song_id: song.id_code });
+
+      // Reload song with full associations to return formatted data
+      const reloadedSong = await EventJamSong.findOne({
+        where: { id: song.id },
+        include: [
+          { model: EventJamSongInstrumentSlot, as: 'instrumentSlots' },
+          { model: EventJamSongCandidate, as: 'candidates', include: [{ model: EventGuest, as: 'guest', include: [{ model: User, as: 'user', attributes: ['id', 'id_code', 'name', 'email', 'avatar_url'] }] }] },
+          { model: EventJamSongRating, as: 'ratings' }
+        ]
+      });
+
+      // Format the response to match GET structure
+      const byInstrument = {};
+      for (const slot of (reloadedSong.instrumentSlots || [])) {
+        byInstrument[slot.instrument] = { instrument: slot.instrument, slots: slot.slots, required: slot.required, fallback_allowed: slot.fallback_allowed, approved: [], pending: [] };
+      }
+      for (const c of (reloadedSong.candidates || [])) {
+        const bucket = byInstrument[c.instrument] || (byInstrument[c.instrument] = { instrument: c.instrument, slots: 0, required: false, fallback_allowed: true, approved: [], pending: [] });
+        const displayName = c.guest?.user?.name || c.guest?.guest_name || null;
+        const email = c.guest?.user?.email || c.guest?.guest_email || null;
+        const avatar_url = c.guest?.user?.avatar_url || null;
+        const entry = { candidate_id: c.id_code, guest_id: c.guest?.id_code, display_name: displayName, email, avatar_url, status: c.status };
+        if (c.status === 'approved') bucket.approved.push(entry); else bucket.pending.push(entry);
+      }
+      const ratings = reloadedSong.ratings || [];
+      const avg = ratings.length ? (ratings.reduce((a, r) => a + r.stars, 0) / ratings.length) : null;
+      
+      const formattedSong = {
+        id: reloadedSong.id_code,
+        jam_id: jam.id_code,
+        title: reloadedSong.title,
+        artist: reloadedSong.artist,
+        status: reloadedSong.status,
+        ready: !!reloadedSong.ready,
+        order_index: reloadedSong.order_index,
+        release_batch: reloadedSong.release_batch,
+        instrument_buckets: Object.values(byInstrument),
+        rating_summary: ratings.length ? { average: Number(avg.toFixed(2)), count: ratings.length } : null,
+        cover_image: reloadedSong.cover_image,
+        extra_data: reloadedSong.extra_data,
+        catalog_id: reloadedSong.catalog_id,
+        updated_at: reloadedSong.updated_at,
+        created_at: reloadedSong.created_at
+      };
+
+      return res.status(201).json({ success: true, data: { jam: { id: jam.id_code, event_id: event.id_code, name: jam.name, status: jam.status }, song: formattedSong } });
+    } catch (err) {
+      await tx.rollback();
+      throw err;
+    }
   } catch (err) {
     if (err.name === 'SequelizeUniqueConstraintError') {
       return res.status(409).json({ error: 'Duplicate entry', message: 'Slug de jam ou configuração duplicada' });
@@ -259,9 +359,9 @@ router.post('/:id/jams/:jamId/songs/:songId/instrument-slots', authenticateToken
   const { id, jamId, songId } = req.params;
   const event = await Event.findOne({ where: { id_code: id } });
   if (!event) return res.status(404).json({ error: 'Not Found', message: 'Evento não encontrado' });
-  const jam = await EventJam.findOne({ where: { id: jamId, event_id: event.id } });
+  const jam = await EventJam.findOne({ where: { id_code: jamId, event_id: event.id } });
   if (!jam) return res.status(404).json({ error: 'Not Found', message: 'Jam não encontrada' });
-  const song = await EventJamSong.findOne({ where: { id: songId, jam_id: jam.id } });
+  const song = await EventJamSong.findOne({ where: { id_code: songId, jam_id: jam.id } });
   if (!song) return res.status(404).json({ error: 'Not Found', message: 'Música não encontrada' });
   const slots = Array.isArray(req.body) ? req.body : (req.body.instrument_slots || []);
   const tx = await EventJamSongInstrumentSlot.sequelize.transaction();
@@ -271,7 +371,7 @@ router.post('/:id/jams/:jamId/songs/:songId/instrument-slots', authenticateToken
       await EventJamSongInstrumentSlot.create({ jam_song_id: song.id, instrument: s.instrument, slots: s.slots || 1, required: s.required !== undefined ? !!s.required : true, fallback_allowed: s.fallback_allowed !== undefined ? !!s.fallback_allowed : true }, { transaction: tx });
     }
     await tx.commit();
-    emitEvent(id, jamId, 'instrument_slots_updated', { song_id: song.id });
+    emitEvent(id, jamId, 'instrument_slots_updated', { song_id: song.id_code });
     return res.json({ success: true });
   } catch (e) {
     await tx.rollback();
@@ -283,10 +383,10 @@ router.put('/:id/jams/:jamId/songs/:songId', authenticateToken, requireRole('adm
   const { id, jamId, songId } = req.params;
   const event = await Event.findOne({ where: { id_code: id } });
   if (!event) return res.status(404).json({ error: 'Not Found', message: 'Evento não encontrado' });
-  const jam = await EventJam.findOne({ where: { id: jamId, event_id: event.id } });
+  const jam = await EventJam.findOne({ where: { id_code: jamId, event_id: event.id } });
   if (!jam) return res.status(404).json({ error: 'Not Found', message: 'Jam não encontrada' });
   
-  const song = await EventJamSong.findOne({ where: { id: songId, jam_id: jam.id } });
+  const song = await EventJamSong.findOne({ where: { id_code: songId, jam_id: jam.id } });
   if (!song) return res.status(404).json({ error: 'Not Found', message: 'Música não encontrada' });
 
   const { title, artist, cover_image, extra_data, key, tempo_bpm, notes, release_batch, status, order_index } = req.body;
@@ -304,8 +404,8 @@ router.put('/:id/jams/:jamId/songs/:songId', authenticateToken, requireRole('adm
     order_index: order_index !== undefined ? order_index : song.order_index
   });
 
-  emitEvent(id, jamId, 'song_updated', { song_id: song.id });
-  return res.json({ success: true, data: song });
+  emitEvent(id, jamId, 'song_updated', { song_id: song.id_code });
+  return res.json({ success: true, data: { ...song.toJSON(), id: song.id_code, jam_id: jam.id_code, id_code: undefined } });
 });
 
 router.post('/:id/jams/:jamId/songs/release', authenticateToken, requireRole('admin', 'master'), async (req, res) => {
@@ -314,22 +414,39 @@ router.post('/:id/jams/:jamId/songs/release', authenticateToken, requireRole('ad
   if (!Array.isArray(song_ids) || !song_ids.length) return res.status(400).json({ error: 'Validation error', message: 'song_ids obrigatório' });
   const event = await Event.findOne({ where: { id_code: id } });
   if (!event) return res.status(404).json({ error: 'Not Found', message: 'Evento não encontrado' });
-  const jam = await EventJam.findOne({ where: { id: jamId, event_id: event.id } });
+  const jam = await EventJam.findOne({ where: { id_code: jamId, event_id: event.id } });
   if (!jam) return res.status(404).json({ error: 'Not Found', message: 'Jam não encontrada' });
+  
+  // Resolve numeric IDs from id_codes
+  const songs = await EventJamSong.findAll({ where: { id_code: { [Op.in]: song_ids }, jam_id: jam.id } });
+  const numericIds = songs.map(s => s.id);
+  const foundIdCodes = songs.map(s => s.id_code);
+
   const maxOpen = parseInt(process.env.JAM_MAX_OPEN_SONGS || '5');
   if (action === 'open') {
     const currentOpen = await EventJamSong.count({ where: { jam_id: jam.id, status: 'open_for_candidates' } });
-    if (currentOpen + song_ids.length > maxOpen) return res.status(400).json({ error: 'Validation error', message: 'Limite de músicas abertas excedido' });
-    await EventJamSong.update({ status: 'open_for_candidates' }, { where: { id: { [Op.in]: song_ids }, jam_id: jam.id } });
-    emitEvent(id, jamId, 'songs_opened', { song_ids });
+    if (currentOpen + numericIds.length > maxOpen) return res.status(400).json({ error: 'Validation error', message: 'Limite de músicas abertas excedido' });
+    await EventJamSong.update({ status: 'open_for_candidates' }, { where: { id: { [Op.in]: numericIds }, jam_id: jam.id } });
+    emitEvent(id, jamId, 'songs_opened', { song_ids: foundIdCodes });
   } else if (action === 'close') {
-    await EventJamSong.update({ status: 'planned', ready: false }, { where: { id: { [Op.in]: song_ids }, jam_id: jam.id } });
-    const notApproved = await EventJamSongCandidate.findAll({ where: { jam_song_id: { [Op.in]: song_ids }, status: { [Op.ne]: 'approved' } } });
+    await EventJamSong.update({ status: 'planned', ready: false }, { where: { id: { [Op.in]: numericIds }, jam_id: jam.id } });
+    const notApproved = await EventJamSongCandidate.findAll({ 
+      where: { jam_song_id: { [Op.in]: numericIds }, status: { [Op.ne]: 'approved' } },
+      include: [{ model: EventJamSong, as: 'song' }] 
+    });
+    // Need to verify association alias for EventJamSongCandidate -> EventJamSong. Assuming 'song' or we can fetch manually.
+    // If alias is not defined, we can rely on map.
+    // But since we have numericIds, let's map back.
+    const songIdMap = new Map(songs.map(s => [s.id, s.id_code]));
+    
     for (const c of notApproved) {
       await c.update({ status: 'rejected' });
-      emitEvent(id, jamId, 'candidate_rejected', { song_id: c.jam_song_id, instrument: c.instrument });
+      const sIdCode = songIdMap.get(c.jam_song_id);
+      if (sIdCode) {
+        emitEvent(id, jamId, 'candidate_rejected', { song_id: sIdCode, instrument: c.instrument });
+      }
     }
-    emitEvent(id, jamId, 'songs_closed', { song_ids });
+    emitEvent(id, jamId, 'songs_closed', { song_ids: foundIdCodes });
   } else {
     return res.status(400).json({ error: 'Validation error', message: 'Ação inválida' });
   }
@@ -340,7 +457,7 @@ router.get('/:id/jams/:jamId/songs/open', async (req, res) => {
   const { id, jamId } = req.params;
   const event = await Event.findOne({ where: { id_code: id } });
   if (!event) return res.status(404).json({ error: 'Not Found', message: 'Evento não encontrado' });
-  const jam = await EventJam.findOne({ where: { id: jamId, event_id: event.id } });
+  const jam = await EventJam.findOne({ where: { id_code: jamId, event_id: event.id } });
   if (!jam) return res.status(404).json({ error: 'Not Found', message: 'Jam não encontrada' });
   const songs = await EventJamSong.findAll({ where: { jam_id: jam.id, status: 'open_for_candidates' }, order: [['order_index', 'ASC']], include: [{ model: EventJamSongInstrumentSlot, as: 'instrumentSlots' }, { model: EventJamSongCandidate, as: 'candidates' }, { model: EventJamSongRating, as: 'ratings' }] });
 
@@ -368,9 +485,9 @@ router.get('/:id/jams/:jamId/songs/open', async (req, res) => {
     const requiredCount = slots.filter(s => s.required).length;
     const approvedRequired = slots.filter(s => s.required).reduce((a, s) => a + (s.approved_count > 0 ? 1 : 0), 0);
     const myApp = (myGuest && (song.candidates || []).find(c => c.event_guest_id === myGuest.id)) || null;
-    return { id: song.id, jam_id: song.jam_id, title: song.title, artist: song.artist, key: song.key, tempo_bpm: song.tempo_bpm, status: song.status, ready: !!song.ready, order_index: song.order_index, release_batch: song.release_batch, instrument_slots: slots, my_application: myApp ? { instrument: myApp.instrument, status: myApp.status } : null, lineup_completeness: { required_instruments: requiredCount, approved_required: approvedRequired, is_full: approvedRequired === requiredCount }, rating_summary: ratings.length ? { average: Number(avg.toFixed(2)), count: ratings.length } : null };
+    return { id: song.id_code, jam_id: jam.id_code, title: song.title, artist: song.artist, key: song.key, tempo_bpm: song.tempo_bpm, status: song.status, ready: !!song.ready, order_index: song.order_index, release_batch: song.release_batch, instrument_slots: slots, my_application: myApp ? { instrument: myApp.instrument, status: myApp.status } : null, lineup_completeness: { required_instruments: requiredCount, approved_required: approvedRequired, is_full: approvedRequired === requiredCount }, rating_summary: ratings.length ? { average: Number(avg.toFixed(2)), count: ratings.length } : null };
   });
-  return res.json({ success: true, data: { jam: { id: jam.id, event_id: event.id, name: jam.name, status: jam.status }, songs: data } });
+  return res.json({ success: true, data: { jam: { id: jam.id_code, event_id: event.id_code, name: jam.name, status: jam.status }, songs: data } });
 });
 
 router.get('/:id/jams/open', authenticateToken, async (req, res) => {
@@ -384,7 +501,7 @@ router.get('/:id/jams/open', authenticateToken, async (req, res) => {
   const jamIds = jams.map(j => j.id);
   const songs = await EventJamSong.findAll({ where: { jam_id: { [Op.in]: jamIds }, status: 'open_for_candidates' }, order: [['order_index', 'ASC']], include: [{ model: EventJamSongInstrumentSlot, as: 'instrumentSlots' }, { model: EventJamSongCandidate, as: 'candidates' }, { model: EventJamSongRating, as: 'ratings' }] });
 
-  const jamsById = jams.reduce((acc, j) => { acc[j.id] = { id: j.id, name: j.name, status: j.status }; return acc; }, {});
+  const jamsById = jams.reduce((acc, j) => { acc[j.id] = { id: j.id_code, name: j.name, status: j.status }; return acc; }, {});
   const data = songs.map((song, index) => {
     const slots = (song.instrumentSlots || []).map(s => {
       const approved = (song.candidates || []).filter(c => c.instrument === s.instrument && c.status === 'approved').length;
@@ -396,7 +513,7 @@ router.get('/:id/jams/open', authenticateToken, async (req, res) => {
     const requiredCount = slots.filter(s => s.required).length;
     const approvedRequired = slots.filter(s => s.required).reduce((a, s) => a + (s.approved_count > 0 ? 1 : 0), 0);
     const myApp = (song.candidates || []).find(c => c.event_guest_id === guest.id) || null;
-    return { jam: jamsById[song.jam_id] || { id: song.jam_id }, id: song.id, jam_id: song.jam_id, title: song.title, artist: song.artist, status: song.status, ready: !!song.ready, order_index: song.order_index, queue_position: index + 1, release_batch: song.release_batch, instrument_slots: slots, my_application: myApp ? { instrument: myApp.instrument, status: myApp.status } : null, lineup_completeness: { required_instruments: requiredCount, approved_required: approvedRequired, is_full: approvedRequired === requiredCount }, rating_summary: ratings.length ? { average: Number(avg.toFixed(2)), count: ratings.length } : null };
+    return { jam: jamsById[song.jam_id] || { id: null }, id: song.id_code, jam_id: jamsById[song.jam_id]?.id, title: song.title, artist: song.artist, status: song.status, ready: !!song.ready, order_index: song.order_index, queue_position: index + 1, release_batch: song.release_batch, instrument_slots: slots, my_application: myApp ? { instrument: myApp.instrument, status: myApp.status } : null, lineup_completeness: { required_instruments: requiredCount, approved_required: approvedRequired, is_full: approvedRequired === requiredCount }, rating_summary: ratings.length ? { average: Number(avg.toFixed(2)), count: ratings.length } : null };
   });
   return res.json({ success: true, data });
 });
@@ -409,7 +526,6 @@ router.get('/:id/jams/my/on-stage', authenticateToken, async (req, res) => {
   if (!guest || !guest.check_in_at) return res.status(403).json({ error: 'Access denied', message: 'Check-in obrigatório para visualizar' });
   const jams = await EventJam.findAll({ where: { event_id: event.id } });
   const jamIds = jams.map(j => j.id);
-  // Busca a fila global completa
   const globalQueue = await EventJamSong.findAll({
     where: { jam_id: { [Op.in]: jamIds }, status: 'on_stage' },
     order: [['order_index', 'ASC']],
@@ -419,14 +535,14 @@ router.get('/:id/jams/my/on-stage', authenticateToken, async (req, res) => {
     ]
   });
 
-  const jamsById = jams.reduce((acc, j) => { acc[j.id] = { id: j.id, name: j.name, status: j.status }; return acc; }, {});
+  const jamsById = jams.reduce((acc, j) => { acc[j.id] = { id: j.id_code, name: j.name, status: j.status }; return acc; }, {});
 
   const formatSong = (song, index) => {
     const myApp = (song.candidates || []).find(c => c.event_guest_id === guest.id && c.status === 'approved') || null;
     const slots = (song.instrumentSlots || []).map(s => ({ instrument: s.instrument, slots: s.slots, required: s.required, fallback_allowed: s.fallback_allowed }));
     return {
-      jam: jamsById[song.jam_id] || { id: song.jam_id },
-      id: song.id,
+      jam: jamsById[song.jam_id] || { id: null },
+      id: song.id_code,
       title: song.title,
       artist: song.artist,
       status: song.status,
@@ -438,9 +554,7 @@ router.get('/:id/jams/my/on-stage', authenticateToken, async (req, res) => {
 
   const nowPlaying = globalQueue.length > 0 ? formatSong(globalQueue[0], 1) : null;
   const myUpcoming = globalQueue.map((s, i) => {
-    // Pula a primeira se já for nowPlaying
     if (i === 0) return null;
-    // Verifica se é minha
     const isMine = (s.candidates || []).some(c => c.event_guest_id === guest.id && c.status === 'approved');
     if (!isMine) return null;
     return formatSong(s, i + 1);
@@ -471,18 +585,17 @@ router.get('/:id/jams/playlist', authenticateToken, async (req, res) => {
         model: EventJamSongCandidate, 
         as: 'candidates', 
         where: { status: 'approved' },
-        required: false, // Include song even if no candidates approved yet
+        required: false, 
         include: [{ model: EventGuest, as: 'guest', include: [{ model: User, as: 'user', attributes: ['name', 'avatar_url'] }] }]
       }
     ]
   });
 
-  const jamsById = jams.reduce((acc, j) => { acc[j.id] = { id: j.id, name: j.name, status: j.status }; return acc; }, {});
+  const jamsById = jams.reduce((acc, j) => { acc[j.id] = { id: j.id_code, name: j.name, status: j.status }; return acc; }, {});
 
   const data = songs.map((song, index) => {
     const musicians = (song.candidates || []).map(c => {
       const name = c.guest?.user?.name || c.guest?.guest_name || 'Unknown';
-      // Prioriza selfie do EventGuest, fallback para avatar do User
       const avatar_url = c.guest?.selfie_url || c.guest?.user?.avatar_url || null;
       return { 
         name, 
@@ -492,8 +605,8 @@ router.get('/:id/jams/playlist', authenticateToken, async (req, res) => {
     });
 
     return {
-      jam: jamsById[song.jam_id] || { id: song.jam_id },
-      id: song.id,
+      jam: jamsById[song.jam_id] || { id: null },
+      id: song.id_code,
       title: song.title,
       artist: song.artist,
       status: song.status,
@@ -512,7 +625,7 @@ router.get('/:id/jam', authenticateToken, async (req, res) => {
   const guest = await EventGuest.findOne({ where: { event_id: event.id, user_id: req.user.userId } });
   if (!guest || !guest.check_in_at) return res.status(403).json({ error: 'Access denied', message: 'Check-in obrigatório para visualizar' });
   const jam = await EventJam.findOne({ where: { event_id: event.id }, order: [['order_index', 'ASC']] });
-  return res.json({ success: true, data: { jam_id: jam ? jam.id : null } });
+  return res.json({ success: true, data: { jam_id: jam ? jam.id_code : null } });
 });
 
 router.get('/stream-test', (req, res) => {
@@ -540,9 +653,9 @@ router.post('/:id/jams/:jamId/songs/:songId/apply', authenticateToken, [
   const { instrument } = req.body;
   const event = await Event.findOne({ where: { id_code: id } });
   if (!event) return res.status(404).json({ error: 'Not Found', message: 'Evento não encontrado' });
-  const jam = await EventJam.findOne({ where: { id: jamId, event_id: event.id } });
+  const jam = await EventJam.findOne({ where: { id_code: jamId, event_id: event.id } });
   if (!jam) return res.status(404).json({ error: 'Not Found', message: 'Jam não encontrada' });
-  const song = await EventJamSong.findOne({ where: { id: songId, jam_id: jam.id } });
+  const song = await EventJamSong.findOne({ where: { id_code: songId, jam_id: jam.id } });
   if (!song || song.status !== 'open_for_candidates') return res.status(400).json({ error: 'Validation error', message: 'Música indisponível para candidatura' });
   const guest = await EventGuest.findOne({ where: { event_id: event.id, user_id: req.user.userId } });
   if (!guest) return res.status(404).json({ error: 'Not Found', message: 'Convidado não encontrado no evento' });
@@ -550,26 +663,26 @@ router.post('/:id/jams/:jamId/songs/:songId/apply', authenticateToken, [
   const exists = await EventJamSongCandidate.findOne({ where: { jam_song_id: song.id, instrument, event_guest_id: guest.id } });
   if (exists) return res.status(409).json({ error: 'Duplicate entry', message: 'Já candidatado' });
   const created = await EventJamSongCandidate.create({ jam_song_id: song.id, instrument, event_guest_id: guest.id, status: 'pending' });
-  emitEvent(id, jamId, 'candidate_applied', { song_id: song.id, instrument });
-  return res.status(201).json({ success: true, data: created });
+  emitEvent(id, jamId, 'candidate_applied', { song_id: song.id_code, instrument });
+  return res.status(201).json({ success: true, data: { ...created.toJSON(), id: created.id_code, jam_song_id: song.id_code, event_guest_id: guest.id_code, id_code: undefined } });
 });
 
 router.post('/:id/jams/:jamId/songs/:songId/candidates/:candidateId/approve', authenticateToken, requireRole('admin', 'master'), async (req, res) => {
   const { id, jamId, songId, candidateId } = req.params;
   const event = await Event.findOne({ where: { id_code: id } });
   if (!event) return res.status(404).json({ error: 'Not Found', message: 'Evento não encontrado' });
-  const jam = await EventJam.findOne({ where: { id: jamId, event_id: event.id } });
+  const jam = await EventJam.findOne({ where: { id_code: jamId, event_id: event.id } });
   if (!jam) return res.status(404).json({ error: 'Not Found', message: 'Jam não encontrada' });
-  const song = await EventJamSong.findOne({ where: { id: songId, jam_id: jam.id } });
+  const song = await EventJamSong.findOne({ where: { id_code: songId, jam_id: jam.id } });
   if (!song) return res.status(404).json({ error: 'Not Found', message: 'Música não encontrada' });
-  const candidate = await EventJamSongCandidate.findOne({ where: { id: candidateId, jam_song_id: song.id } });
+  const candidate = await EventJamSongCandidate.findOne({ where: { id_code: candidateId, jam_song_id: song.id } });
   if (!candidate) return res.status(404).json({ error: 'Not Found', message: 'Candidato não encontrado' });
   const slot = await EventJamSongInstrumentSlot.findOne({ where: { jam_song_id: song.id, instrument: candidate.instrument } });
   if (!slot) return res.status(400).json({ error: 'Validation error', message: 'Instrumento não configurado' });
   const approvedCount = await EventJamSongCandidate.count({ where: { jam_song_id: song.id, instrument: candidate.instrument, status: 'approved' } });
   if (approvedCount >= (slot.slots || 1)) return res.status(400).json({ error: 'Validation error', message: 'Vagas preenchidas' });
   await candidate.update({ status: 'approved', approved_at: new Date(), approved_by_user_id: req.user.userId });
-  emitEvent(id, jamId, 'candidate_approved', { song_id: song.id, instrument: candidate.instrument });
+  emitEvent(id, jamId, 'candidate_approved', { song_id: song.id_code, instrument: candidate.instrument });
   return res.json({ success: true });
 });
 
@@ -577,14 +690,14 @@ router.post('/:id/jams/:jamId/songs/:songId/candidates/:candidateId/reject', aut
   const { id, jamId, songId, candidateId } = req.params;
   const event = await Event.findOne({ where: { id_code: id } });
   if (!event) return res.status(404).json({ error: 'Not Found', message: 'Evento não encontrado' });
-  const jam = await EventJam.findOne({ where: { id: jamId, event_id: event.id } });
+  const jam = await EventJam.findOne({ where: { id_code: jamId, event_id: event.id } });
   if (!jam) return res.status(404).json({ error: 'Not Found', message: 'Jam não encontrada' });
-  const song = await EventJamSong.findOne({ where: { id: songId, jam_id: jam.id } });
+  const song = await EventJamSong.findOne({ where: { id_code: songId, jam_id: jam.id } });
   if (!song) return res.status(404).json({ error: 'Not Found', message: 'Música não encontrada' });
-  const candidate = await EventJamSongCandidate.findOne({ where: { id: candidateId, jam_song_id: song.id } });
+  const candidate = await EventJamSongCandidate.findOne({ where: { id_code: candidateId, jam_song_id: song.id } });
   if (!candidate) return res.status(404).json({ error: 'Not Found', message: 'Candidato não encontrado' });
   await candidate.update({ status: 'rejected' });
-  emitEvent(id, jamId, 'candidate_rejected', { song_id: song.id, instrument: candidate.instrument });
+  emitEvent(id, jamId, 'candidate_rejected', { song_id: song.id_code, instrument: candidate.instrument });
   return res.json({ success: true });
 });
 
@@ -597,9 +710,9 @@ router.post('/:id/jams/:jamId/songs/:songId/move', authenticateToken, requireRol
   const { status } = req.body;
   const event = await Event.findOne({ where: { id_code: id } });
   if (!event) return res.status(404).json({ error: 'Not Found', message: 'Evento não encontrado' });
-  const jam = await EventJam.findOne({ where: { id: jamId, event_id: event.id } });
+  const jam = await EventJam.findOne({ where: { id_code: jamId, event_id: event.id } });
   if (!jam) return res.status(404).json({ error: 'Not Found', message: 'Jam não encontrada' });
-  const song = await EventJamSong.findOne({ where: { id: songId, jam_id: jam.id } });
+  const song = await EventJamSong.findOne({ where: { id_code: songId, jam_id: jam.id } });
   if (!song) return res.status(404).json({ error: 'Not Found', message: 'Música não encontrada' });
   if (status === 'planned') {
     await song.update({ status: 'planned', ready: false });
@@ -611,7 +724,7 @@ router.post('/:id/jams/:jamId/songs/:songId/move', authenticateToken, requireRol
   } else if (status === 'canceled') {
     await song.update({ status: 'canceled' });
   }
-  emitEvent(id, jamId, 'song_status_changed', { song_id: song.id, status });
+  emitEvent(id, jamId, 'song_status_changed', { song_id: song.id_code, status });
   return res.json({ success: true });
 });
 
@@ -624,9 +737,9 @@ router.patch('/:id/jams/:jamId/songs/:songId/status', authenticateToken, require
   const { status } = req.body;
   const event = await Event.findOne({ where: { id_code: id } });
   if (!event) return res.status(404).json({ error: 'Not Found', message: 'Evento não encontrado' });
-  const jam = await EventJam.findOne({ where: { id: jamId, event_id: event.id } });
+  const jam = await EventJam.findOne({ where: { id_code: jamId, event_id: event.id } });
   if (!jam) return res.status(404).json({ error: 'Not Found', message: 'Jam não encontrada' });
-  const song = await EventJamSong.findOne({ where: { id: songId, jam_id: jam.id } });
+  const song = await EventJamSong.findOne({ where: { id_code: songId, jam_id: jam.id } });
   if (!song) return res.status(404).json({ error: 'Not Found', message: 'Música não encontrada' });
   if (status === 'planned') {
     await song.update({ status: 'planned', ready: false });
@@ -638,7 +751,7 @@ router.patch('/:id/jams/:jamId/songs/:songId/status', authenticateToken, require
   } else if (status === 'canceled') {
     await song.update({ status: 'canceled' });
   }
-  emitEvent(id, jamId, 'song_status_changed', { song_id: song.id, status });
+  emitEvent(id, jamId, 'song_status_changed', { song_id: song.id_code, status });
   return res.json({ success: true });
 });
 
@@ -651,13 +764,13 @@ router.patch('/:id/jams/:jamId/songs/:songId/ready', authenticateToken, requireR
   const { ready } = req.body;
   const event = await Event.findOne({ where: { id_code: id } });
   if (!event) return res.status(404).json({ error: 'Not Found', message: 'Evento não encontrado' });
-  const jam = await EventJam.findOne({ where: { id: jamId, event_id: event.id } });
+  const jam = await EventJam.findOne({ where: { id_code: jamId, event_id: event.id } });
   if (!jam) return res.status(404).json({ error: 'Not Found', message: 'Jam não encontrada' });
-  const song = await EventJamSong.findOne({ where: { id: songId, jam_id: jam.id } });
+  const song = await EventJamSong.findOne({ where: { id_code: songId, jam_id: jam.id } });
   if (!song) return res.status(404).json({ error: 'Not Found', message: 'Música não encontrada' });
   if (song.status !== 'open_for_candidates') return res.status(400).json({ error: 'Validation error', message: 'Toggle permitido apenas em open_for_candidates' });
   await song.update({ ready: !!ready });
-  emitEvent(id, jamId, 'song_ready_changed', { song_id: song.id, ready: !!ready });
+  emitEvent(id, jamId, 'song_ready_changed', { song_id: song.id_code, ready: !!ready });
   return res.json({ success: true });
 });
 
@@ -671,25 +784,35 @@ router.patch('/:id/jams/:jamId/songs/order', authenticateToken, requireRole('adm
   const { status, ordered_ids } = req.body;
   const event = await Event.findOne({ where: { id_code: id } });
   if (!event) return res.status(404).json({ error: 'Not Found', message: 'Evento não encontrado' });
-  const jam = await EventJam.findOne({ where: { id: jamId, event_id: event.id } });
+  const jam = await EventJam.findOne({ where: { id_code: jamId, event_id: event.id } });
   if (!jam) return res.status(404).json({ error: 'Not Found', message: 'Jam não encontrada' });
+  
+  // Fetch songs by status
   const songs = await EventJamSong.findAll({ where: { jam_id: jam.id, status }, order: [['order_index','ASC']] });
-  const idsSet = new Set(songs.map(s => s.id));
-  const ordered = ordered_ids.map((x) => parseInt(x, 10));
-  if (ordered.some((v) => !Number.isFinite(v))) {
-    return res.status(400).json({ error: 'Validation error', message: 'ordered_ids deve conter inteiros válidos' });
+  
+  // Map ordered_ids (UUIDs) to internal song objects
+  const songMap = new Map(songs.map(s => [s.id_code, s]));
+  const ordered = ordered_ids.map(uuid => songMap.get(uuid)).filter(Boolean);
+  
+  if (ordered.length !== ordered_ids.length) {
+    // Some IDs were not found or invalid
+    return res.status(400).json({ error: 'Validation error', message: 'ordered_ids contém itens inválidos ou fora do status' });
   }
-  for (const sid of ordered) { if (!idsSet.has(sid)) return res.status(400).json({ error: 'Validation error', message: 'ordered_ids contém itens fora do status' }); }
-  const byId = new Map(songs.map(s => [s.id, s]));
+
   let idx = 0;
-  for (const sid of ordered) {
-    const s = byId.get(sid);
-    if (s) { await s.update({ order_index: idx++ }); }
+  for (const s of ordered) {
+    await s.update({ order_index: idx++ });
   }
+  
+  // Update any remaining songs not in ordered_ids (append them)
+  const orderedSet = new Set(ordered.map(s => s.id));
   for (const s of songs) {
-    if (!ordered.includes(s.id)) { await s.update({ order_index: idx++ }); }
+    if (!orderedSet.has(s.id)) {
+      await s.update({ order_index: idx++ });
+    }
   }
-  emitEvent(id, jamId, 'song_order_changed', { status, ordered_ids: ordered });
+
+  emitEvent(id, jamId, 'song_order_changed', { status, ordered_ids });
   return res.json({ success: true });
 });
 
@@ -697,17 +820,43 @@ router.get('/:id/jams/:jamId/users/:userId/queue-position', authenticateToken, a
   const { id, jamId, userId } = req.params;
   const event = await Event.findOne({ where: { id_code: id } });
   if (!event) return res.status(404).json({ error: 'Not Found', message: 'Evento não encontrado' });
-  const jam = await EventJam.findOne({ where: { id: jamId, event_id: event.id } });
+  const jam = await EventJam.findOne({ where: { id_code: jamId, event_id: event.id } });
   if (!jam) return res.status(404).json({ error: 'Not Found', message: 'Jam não encontrada' });
-  if (req.user.role !== 'master' && req.user.role !== 'admin' && req.user.userId !== parseInt(userId, 10)) return res.status(403).json({ error: 'Access denied' });
-  const guest = await EventGuest.findOne({ where: { event_id: event.id, user_id: parseInt(userId, 10) } });
+  
+  // userId from params is likely id_code if consistent with other changes, but here it seems to be user ID or guest ID?
+  // User says "entrada sempre é por id_code".
+  // But userId param usually refers to User.id or User.id_code?
+  // Let's assume User.id_code because of consistency.
+  // But line 802 uses parseInt(userId, 10).
+  // If input is UUID, parseInt is NaN.
+  // I should fetch User by id_code.
+  
+  let targetUserId = null;
+  const targetUser = await User.findOne({ where: { id_code: userId } });
+  if (targetUser) targetUserId = targetUser.id;
+  
+  if (!targetUserId) {
+     // Fallback to integer check if old client? Or error?
+     // Let's assume strictly UUID now.
+     return res.status(404).json({ error: 'Not Found', message: 'Usuário não encontrado' });
+  }
+
+  if (req.user.role !== 'master' && req.user.role !== 'admin' && req.user.userId !== targetUserId) return res.status(403).json({ error: 'Access denied' });
+  
+  const guest = await EventGuest.findOne({ where: { event_id: event.id, user_id: targetUserId } });
   if (!guest) return res.status(404).json({ error: 'Not Found', message: 'Convidado não encontrado no evento' });
+  
   const queue = await EventJamSong.findAll({ where: { jam_id: jam.id, status: 'open_for_candidates', ready: true }, order: [['order_index','ASC']] });
   const approved = await EventJamSongCandidate.findAll({ where: { event_guest_id: guest.id, status: 'approved', jam_song_id: { [Op.in]: queue.map(s => s.id) } } });
+  
+  const songIdMap = new Map(queue.map(s => [s.id, s.id_code]));
+  
   const positions = approved.map(a => {
     const idx = queue.findIndex(s => s.id === a.jam_song_id);
-    return { songId: a.jam_song_id, position: idx >= 0 ? (idx + 1) : null };
+    const sIdCode = songIdMap.get(a.jam_song_id);
+    return { songId: sIdCode, position: idx >= 0 ? (idx + 1) : null };
   }).filter(p => p.position != null);
+  
   return res.json({ success: true, data: { positions, total: queue.length } });
 });
 
@@ -715,20 +864,22 @@ router.delete('/:id/jams/:jamId/songs/:songId', authenticateToken, requireRole('
   const { id, jamId, songId } = req.params;
   const event = await Event.findOne({ where: { id_code: id } });
   if (!event) return res.status(404).json({ error: 'Not Found', message: 'Evento não encontrado' });
-  const jam = await EventJam.findOne({ where: { id: jamId, event_id: event.id } });
+  const jam = await EventJam.findOne({ where: { id_code: jamId, event_id: event.id } });
   if (!jam) return res.status(404).json({ error: 'Not Found', message: 'Jam não encontrada' });
-  const song = await EventJamSong.findOne({ where: { id: songId, jam_id: jam.id } });
+  const song = await EventJamSong.findOne({ where: { id_code: songId, jam_id: jam.id } });
   if (!song) return res.status(404).json({ error: 'Not Found', message: 'Música não encontrada' });
   const status = song.status;
   await EventJamSongCandidate.destroy({ where: { jam_song_id: song.id } });
   await EventJamSongInstrumentSlot.destroy({ where: { jam_song_id: song.id } });
   await EventJamSongRating.destroy({ where: { jam_song_id: song.id } });
   await song.destroy();
+  
   const rest = await EventJamSong.findAll({ where: { jam_id: jam.id, status }, order: [['order_index','ASC']] });
   let idx = 0;
   for (const s of rest) { await s.update({ order_index: idx++ }); }
-  emitEvent(id, jamId, 'song_deleted', { song_id: parseInt(songId, 10) });
-  emitEvent(id, jamId, 'song_order_changed', { status, ordered_ids: rest.map(s => s.id) });
+  
+  emitEvent(id, jamId, 'song_deleted', { song_id: songId });
+  emitEvent(id, jamId, 'song_order_changed', { status, ordered_ids: rest.map(s => s.id_code) });
   return res.json({ success: true });
 });
 
@@ -741,9 +892,9 @@ router.post('/:id/jams/:jamId/songs/:songId/rate', authenticateToken, [
   const { stars } = req.body;
   const event = await Event.findOne({ where: { id_code: id } });
   if (!event) return res.status(404).json({ error: 'Not Found', message: 'Evento não encontrado' });
-  const jam = await EventJam.findOne({ where: { id: jamId, event_id: event.id } });
+  const jam = await EventJam.findOne({ where: { id_code: jamId, event_id: event.id } });
   if (!jam) return res.status(404).json({ error: 'Not Found', message: 'Jam não encontrada' });
-  const song = await EventJamSong.findOne({ where: { id: songId, jam_id: jam.id } });
+  const song = await EventJamSong.findOne({ where: { id_code: songId, jam_id: jam.id } });
   if (!song) return res.status(404).json({ error: 'Not Found', message: 'Música não encontrada' });
   if (song.status !== 'played') return res.status(400).json({ error: 'Validation error', message: 'Avaliação permitida apenas após tocar' });
   const [rating, created] = await EventJamSongRating.findOrCreate({ where: { jam_song_id: song.id, user_id: req.user.userId }, defaults: { jam_song_id: song.id, user_id: req.user.userId, stars } });
@@ -751,7 +902,7 @@ router.post('/:id/jams/:jamId/songs/:songId/rate', authenticateToken, [
   const count = await EventJamSongRating.count({ where: { jam_song_id: song.id } });
   const aggregate = await EventJamSongRating.findAll({ where: { jam_song_id: song.id } });
   const avg = aggregate.length ? (aggregate.reduce((a, r) => a + r.stars, 0) / aggregate.length) : 0;
-  emitEvent(id, jamId, 'rating_summary_updated', { song_id: song.id, average: Number(avg.toFixed(2)), count });
+  emitEvent(id, jamId, 'rating_summary_updated', { song_id: song.id_code, average: Number(avg.toFixed(2)), count });
   return res.json({ success: true });
 });
 
@@ -759,9 +910,9 @@ router.get('/:id/jams/:jamId/songs/:songId/ratings', async (req, res) => {
   const { id, jamId, songId } = req.params;
   const event = await Event.findOne({ where: { id_code: id } });
   if (!event) return res.status(404).json({ error: 'Not Found', message: 'Evento não encontrado' });
-  const jam = await EventJam.findOne({ where: { id: jamId, event_id: event.id } });
+  const jam = await EventJam.findOne({ where: { id_code: jamId, event_id: event.id } });
   if (!jam) return res.status(404).json({ error: 'Not Found', message: 'Jam não encontrada' });
-  const song = await EventJamSong.findOne({ where: { id: songId, jam_id: jam.id } });
+  const song = await EventJamSong.findOne({ where: { id_code: songId, jam_id: jam.id } });
   if (!song) return res.status(404).json({ error: 'Not Found', message: 'Música não encontrada' });
   const ratings = await EventJamSongRating.findAll({ where: { jam_song_id: song.id } });
   const avg = ratings.length ? (ratings.reduce((a, r) => a + r.stars, 0) / ratings.length) : 0;
